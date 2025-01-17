@@ -171,8 +171,8 @@ class Module:
         return flat_module
     
     @recurse
-    def record(self, key):
-        self.recordings[key] = jnp.empty(1000)
+    def record(self, key = "v"):
+        self.recordings += [key]
     
     @recurse
     def clamp(self, key, values):
