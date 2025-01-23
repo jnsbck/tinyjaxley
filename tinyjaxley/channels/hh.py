@@ -3,33 +3,27 @@ from ..utils import safe_exp
 
 class Leak(Channel):
     def __init__(self): super().__init__(params = {"g": 0.0003, "e": -54.3}, states = {})
-    def i(self, u, p, t): return p["g"] * (u["v"] - p["e"])
-    def du(self, u, p, t): return {}
-    def init(self, u, p): return {}
+    def __call__(self, t, u, args): return {"i": self.i(t, u, *args)}
+    def i(self, t, u, p, v): return p["g"] * (v - p["e"])
+    def init(self, t, u, p, v): return {"i": self.i(t, u, p, v)}
 
 class Na(Channel):
-    def __init__(self): super().__init__(params = {"g": 0.12, "e": 50.0}, states = {"m": 0.0, "h": 0.0})
-    def i(self, u, p, t): return p["g"] * u["m"]**3 * u["h"] * (u["v"] - p["e"])
-    def du(self, u, p, t): return {"m": self.dm(u, p, t), "h": self.dh(u, p, t)}
-    def dm(self, u, p, t): return self.a_m(u["v"]) * (1 - u["m"]) - self.b_m(u["v"]) * u["m"]
-    def dh(self, u, p, t): return self.a_h(u["v"]) * (1 - u["h"]) - self.b_h(u["v"]) * u["h"]
-    def a_m(self, v): return 0.1 * _vtrap(-(v + 40), 10)
-    def b_m(self, v): return 4.0 * safe_exp(-(v + 65) / 18)
-    def a_h(self, v): return 0.07 * safe_exp(-(v + 65) / 20)
-    def b_h(self, v): return 1.0 / (safe_exp(-(v + 35) / 10) + 1)
-    def m_inf(self, v): return xinf(v, self.a_m, self.b_m)
-    def h_inf(self, v): return xinf(v, self.a_h, self.b_h)
-    def tau_m(self, v): return taux(v, self.a_m, self.b_m)
-    def tau_h(self, v): return taux(v, self.a_h, self.b_h)
-    def init(self, u, p): return {"m": self.m_inf(u["v"]), "h": self.h_inf(u["v"])}
+    def __init__(self): super().__init__(params = {"g": 0.12, "e": 50.0}, states = {"m": 0.2, "h": 0.2})
+    def __call__(self, t, u, args): return {"i": self.i(t, u, *args), "m": self.dm(t, u, *args), "h": self.dh(t, u, *args)}
+    def i(self, t, u, p, v): return p["g"] * u["m"]**3 * u["h"] * (v - p["e"])
+    def dm(self, t, u, p, v): return self.α_m(v) * (1 - u["m"]) - self.β_m(v) * u["m"]
+    def α_m(self, v): return 0.1 * _vtrap(-(v + 40), 10)
+    def β_m(self, v): return 4.0 * safe_exp(-(v + 65) / 18)
+    def dh(self, t, u, p, v): return self.α_h(v) * (1 - u["h"]) - self.β_h(v) * u["h"]
+    def α_h(self, v): return 0.07 * safe_exp(-(v + 65) / 20)
+    def β_h(self, v): return 1.0 / (safe_exp(-(v + 35) / 10) + 1)
+    def init(self, t, u, p, v): return {"i": self.i(t, u, p, v), "m": xinf(v, self.α_m, self.β_m), "h": xinf(v, self.α_h, self.β_h)}
 
 class K(Channel):
-    def __init__(self): super().__init__(params = {"g": 0.036, "e": -77.0}, states = {"n": 0.0})
-    def i(self, u, p, t): return p["g"] * u["n"]**4 * (u["v"] - p["e"])
-    def du(self, u, p, t): return {"n": self.dn(u, p, t)}
-    def dn(self, u, p, t): return self.a_n(u["v"]) * (1 - u["n"]) - self.b_n(u["v"]) * u["n"]
-    def a_n(self, v): return 0.01 * _vtrap(-(v + 55), 10)
-    def b_n(self, v): return 0.125 * safe_exp(-(v + 65) / 80)
-    def n_inf(self, v): return xinf(v, self.a_n, self.b_n)
-    def tau_n(self, v): return taux(v, self.a_n, self.b_n)
-    def init(self, u, p): return {"n": self.n_inf(u["v"])}
+    def __init__(self): super().__init__(params = {"g": 0.036, "e": -77.0}, states = {"n": 0.2})
+    def __call__(self, t, u, args): return {"i": self.i(t, u, *args), "n": self.dn(t, u, *args)}
+    def i(self, t, u, p, v): return p["g"] * u["n"]**4 * (v - p["e"])
+    def dn(self, t, u, p, v): return self.α_n(v) * (1 - u["n"]) - self.β_n(v) * u["n"]
+    def α_n(self, v): return 0.01 * _vtrap(-(v + 55), 10)
+    def β_n(self, v): return 0.125 * safe_exp(-(v + 65) / 80)
+    def init(self, t, u, p, v): return {"i": self.i(t, u, p, v), "n": xinf(v, self.α_n, self.β_n)}

@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "diffrax>=0.6.2",
     "jax[cpu]>=0.4.38",
     "matplotlib>=3.10.0",
     "numpy>=2.2.1",

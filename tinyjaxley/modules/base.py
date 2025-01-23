@@ -2,7 +2,7 @@ from copy import deepcopy, copy
 import pandas as pd
 import jax.numpy as jnp
 
-from .utils import recurse
+from .utils import recurse, nested_dict_to_df
 
 class Module:
     def __init__(self, submodules = [], index = 0):
@@ -42,12 +42,11 @@ class Module:
     @recurse
     def states(self, dct):
         for k,v in dct.items():
-            if k in self._states:
-                self._states[k] = v
-            else:
-                for cname, c in self.channels.items():
-                    if k.replace(cname + "_", "") in c.states:
-                        c.states[k.replace(cname + "_", "")] = v
+            if k in self.states:
+                if isinstance(v, dict) and k in self.channels:
+                    self.channels[k].states.update(v)
+                else:
+                    self._states[k] = v
         
     @property
     @recurse
@@ -61,12 +60,11 @@ class Module:
     @recurse
     def params(self, dct):
         for k,v in dct.items():
-            if k in self._params:
-                self._params[k] = v
-            else:
-                for cname, c in self.channels.items():
-                    if k.replace(cname + "_", "") in c.params:
-                        c.params[k.replace(cname + "_", "")] = v
+            if k in self.params:
+                if isinstance(v, dict) and k in self.channels:
+                    self.channels[k].params.update(v)
+                else:
+                    self._params[k] = v
 
     @property
     def flat(self):
@@ -81,23 +79,43 @@ class Module:
     def param_states(self):
         return self.param_states
     
-    @property
-    def nodes(self):
+    def show(self):
         if self.submodules is None:
-            return pd.DataFrame(self.flat.param_states, index = [0])
+            return nested_dict_to_df(self.flat.param_states)
         
-        nodes = []
-        node_inds = []
-        for inds, sm in self.enumerate():
-            nodes.append(sm.param_states)
-            node_inds.append(inds)
-        return pd.DataFrame(nodes, index = pd.MultiIndex.from_tuples(node_inds))
+        nodes, inds = [], []
+        for i, sm in self.enumerate():
+            nodes.append(sm.show())
+            inds.append(i)
+        df = pd.concat(nodes, ignore_index = True)
+        df.index = pd.MultiIndex.from_tuples(inds)
+        return df
     
     @property
     @recurse
     def xyzr(self):
         return self._xyzr
     
+    @property
+    @recurse
+    def stimuli(self):
+        return self._externals["i"]
+    
+    @property
+    @recurse
+    def recordings(self):
+        return self._recordings
+    
+    @property
+    @recurse
+    def externals(self):
+        return self._externals
+    
+    @property
+    @recurse
+    def channels(self):
+        return self._channels
+
     @property
     def shape(self):
         if self.submodules is not None:
@@ -156,7 +174,15 @@ class Module:
     @recurse
     def set(self, key, value):
         self.states = {key: value}
-        self.params = {key: value}                   
+        self.params = {key: value}      
+
+    @recurse
+    def get(self, key):
+        if key in self.states:
+            return self.states[key]
+        if key in self.params:
+            return self.params[key]
+        return None
 
     def flatten(self, comps_only = False):
         submodules = sum([sm.flatten(comps_only) for sm in self], [])
@@ -172,11 +198,13 @@ class Module:
     
     @recurse
     def record(self, key = "v"):
-        self.recordings += [key]
+        self._recordings += [key]
     
     @recurse
     def clamp(self, key, values):
-        self.externals[key] = values
+        if key not in self._externals:
+            self._externals[key] = []
+        self._externals[key] += [values]
 
     def stimulate(self, values):
         self.clamp("i", values)
