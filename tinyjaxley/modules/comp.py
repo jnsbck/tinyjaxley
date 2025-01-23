@@ -32,16 +32,9 @@ class Compartment(Module):
         repr_str += f"({", ".join(self.channels)})" if self.channels else ""
         return repr_str
     
-    def du(self, t, u, p):
+    def i(self, t, u, p):
         area = 2.0 * pi * p["r"] * p["l"] # μm²
-        i = u["i"] / area * 1e5  # nA/μm² -> μA/cm²
-
-        du = {"i": i}
-        i_c = 0.0
-        for cname in self._channels:
-            i_c += u[cname]["i"] * 1000.0 # mA/cm^2 -> μA/cm^2.
-        du["v"] = (i - i_c) / p["c"]
-        return du
+        return u["i"] / area * 1e5  # nA/μm² -> μA/cm²
     
     def init(self, t, u = None, p = None):
         u = self.states if u is None else u
