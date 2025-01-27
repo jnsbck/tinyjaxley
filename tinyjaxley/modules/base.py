@@ -145,7 +145,7 @@ class Module:
             if key == sub_name:
                 return self.at
             
-            if key == sub_name + "s":
+            if key == sub_name + "s" or key == sub_name + "es":
                 return self.submodules
             
     def __getitem__(self, index):

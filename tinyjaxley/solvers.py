@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from .utils import safe_exp
+from .utils import safe_exp, taux, xinf
 
 def fw_euler(du, u, t, dt = 0.025): 
     return u + du * dt, t + dt
@@ -7,6 +7,11 @@ def fw_euler(du, u, t, dt = 0.025):
 def exp_euler(du, u, t, dt = 0.025):
     return u * safe_exp(du * dt), t + dt
 
-def gate_exp_euler(x, x_inf, x_tau, dt = 0.025):
-    exp = safe_exp(-dt / x_tau)
-    return x * exp + x_inf * (1.0 - exp)
+def gate_impl_euler(x, dt, α, β):
+    α_x = x + dt * α
+    β_x = 1.0 + dt * α + dt * β
+    return α_x / β_x
+
+def gate_exp_euler(x, α, β, dt = 0.025):
+    τ = taux(x, α, β)
+    return x * safe_exp(-dt / τ) + xinf(x, α, β) * (1.0 - safe_exp(-dt / τ))
