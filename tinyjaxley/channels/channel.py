@@ -1,14 +1,12 @@
 from abc import ABC, abstractmethod
+from ..tree import Tree
 
-class Channel(ABC):
+class Channel(Tree):
     def __init__(self, params = {}, states = {}):
-        self.states = {"i": 0.0}
-        self.params = {}
-        self.states.update(states)
-        self.params.update(params)
-
-    @property 
-    def name(self): return self.__class__.__name__.lower()
+        super().__init__(None)
+        self._states["i"] = 0.0
+        self._states.update(states)
+        self._params.update(params)
 
     @staticmethod
     @abstractmethod

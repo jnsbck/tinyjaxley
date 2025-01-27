@@ -1,6 +1,6 @@
-from .base import Module
+from ..base import Module
 import jax.numpy as jnp
-from .utils import g_ij
+from ..utils import g_ij
 
 class Cell(Module):
     def __init__(self, branches = None, parents = None):
