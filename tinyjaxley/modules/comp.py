@@ -13,6 +13,7 @@ class Compartment(Module):
         self._params.update({"r": 1.0, "l": 10.0, "c": 1.0, "Ra": 5000.0})
         self._states.update({"v": -70.0, "i": 0.0})
         self._xyzr = jnp.array([[0.0, 0.0, 0.0, self.params["r"]]])
+        self.groups = {}
 
     @property
     def param_states(self):
@@ -30,7 +31,7 @@ class Compartment(Module):
         return "comp"
     
     def __repr__(self, indent = ""):
-        repr_str = f"{indent}{self.name}"
+        repr_str = f"{indent}{self.name}[{self.index}]"
         repr_str += f"({", ".join(self.channels)})" if self.channels else ""
         return repr_str
     
@@ -51,7 +52,6 @@ class Compartment(Module):
         i_channels = sum(jax.tree.flatten(i_channels)[0]) * 1000.0 # mA/cm² -> μA/cm².
         du["i"] = self.i(t, u, p)
         du["v"] = (du["i"] - i_channels) / p["c"]
-
         return du
     
     def init(self, t = 0, u = None, p = None):

@@ -6,7 +6,6 @@ from .utils import recurse, nested_dict_to_df
 
 class Module:
     def __init__(self, submodules = [], index = 0):
-        self.groups = {}
         self._submodules = None
         self.index = index
         self._states = {}
@@ -174,7 +173,7 @@ class Module:
     @recurse
     def set(self, key, value):
         self.states = {key: value}
-        self.params = {key: value}      
+        self.params = {key: value}
 
     @recurse
     def get(self, key):

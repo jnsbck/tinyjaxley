@@ -12,7 +12,7 @@ class Branch(Module):
 
     def vf(self, t, u, p):
         def _vf(comp, u_i, p_i): return comp.vf(t, u_i, p_i)
-        du = jax.tree_map(_vf, self.comps, u, p)
+        du = jax.tree_map(_vf, self.submodules, u, p)
         
         for i,j in self.k_ij:
             du[i]["v"] += g_ij(p[i], p[j]) * (u[j]["v"] - u[i]["v"])
