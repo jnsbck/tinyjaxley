@@ -31,7 +31,7 @@ class Compartment(Module):
         return u["i"] / area * 1e5  # nA/μm² -> μA/cm²
     
     def vf(self, t, u, p):
-        #TODO: fix this!
+        #TODO: fix this! AND MAKE THIS COMPILE FASTER!
         # for key, ext in self.externals.items():
         #     u[key] =  sum(f(t, u, p) for f in ext)
 
@@ -39,8 +39,9 @@ class Compartment(Module):
         u_comp, u_channels = u
         du_comp = {"i": self.i(t, u_comp, p_comp)}
 
-        def body(channel, u, p): return channel.vf(t, u, p, u_comp["v"])
-        du_channels = jax.tree.map(body, self.channels, u_channels, p_channels)
+        def body(vf, u, p): return vf(t, u, p, u_comp["v"])
+        channel_vfs = [c.vf for c in self.channels]
+        du_channels = jax.tree.map(body, channel_vfs, u_channels, p_channels)
         
         i_channels = find(["i"], du_channels, 0.0)
         i_channels = sum(jax.tree.flatten(i_channels)[0]) * 1000.0 # mA/cm² -> μA/cm².

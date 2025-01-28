@@ -44,9 +44,10 @@ class Node(ABC):
         if children is not None:
             self._children = []
             for i, c in enumerate(children):
-                c.index = i
-                c.parent = self
-                self._children += [deepcopy(c)]
+                new_child = deepcopy(c)
+                new_child.index = i
+                new_child.parent = self
+                self._children += [new_child]
 
     def keys(self):
         if self.is_leaf(): return [self.key]
