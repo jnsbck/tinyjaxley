@@ -44,3 +44,12 @@ def g_ij(p_i, p_j):
     r_j, Ra_j, l_j = p_j["r"], p_j["Ra"], p_j["l"]
     g = r_i*r_j**2 / (Ra_i * r_j**2 * l_i + Ra_j * r_i**2 * l_j) / l_i
     return g * 10**7 # S/cm/um -> mS / cm²
+
+def comp_only(func):
+    def wrapper(self, *args, **kwargs):
+        if self.key == "comp": return func(self, *args, **kwargs)
+        else: 
+            if len(out := [func(c, *args, **kwargs) for c in self.children]) > 0:
+                if all([item is None for item in out]): return None
+            return out
+    return wrapper

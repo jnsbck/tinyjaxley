@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from ..tree import Tree
+from ..tree import Node
 
-class Channel(Tree):
+class Channel(Node):
     def __init__(self, params = {}, states = {}):
-        super().__init__(None)
+        super().__init__(None, None)
         self._states["i"] = 0.0
         self._states.update(states)
         self._params.update(params)
