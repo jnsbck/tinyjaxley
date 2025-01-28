@@ -23,4 +23,4 @@ class Branch(Module):
         # TODO: Fix this!
         # for i,j in self.k_ij:
         #     du[i]["v"] += g_ij(p_children[i], p_children[j]) * (u_children[j]["v"] - u_children[i]["v"])
-        return du
+        return [{}, du]
