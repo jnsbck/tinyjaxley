@@ -1,12 +1,14 @@
-from ..tree import Node
-from copy import copy
-import pandas as pd
-from ..utils import comp_only
 import equinox as eqx
 import jax.numpy as jnp
+import pandas as pd
+
+from ..tree import Node
+from ..utils import comp_only
+
+
 class Module(Node):
-    def __init__(self, parent = None, children = []):
-        super().__init__(parent, children)
+    def __init__(self, parent = None, children = [], u = {}, p = {}):
+        super().__init__(parent, children, u=u, p=p)
 
     def __getattr__(self, key):
         if key.startswith("__"):
@@ -36,13 +38,6 @@ class Module(Node):
             if self.children[0].key == "comp":
                 return (len(self),) + self.children[0].shape
         return ()
-    
-    def select(self, index):
-        # TODO: Fix this!
-        flat_module = copy(self)
-        comps = [comp for i, comp in enumerate(self.flatten(comps_only=True)) if i in index]
-        flat_module.children = comps
-        return flat_module
 
     def flatten(self, comps_only = False):
         if comps_only:
@@ -69,16 +64,16 @@ class Module(Node):
     def stimulate(self, func):
         self.clamp("i", func)    
 
-    # @comp_only
-    # def xyzr(self):
-    #     pass
+    def xyzr(self):
+        return jnp.concatenate([comp.xyzr for comp in self.flatten(comps_only=True)])
 
-    @comp_only
     def init(self, t = 0, u = None):
-        u = self.all_states if u is None else u
-        u_comp, u_channels = u
-        for key, ext in self.externals.items():
-            u_comp[key] = sum(f(t, u) for f in ext)
-        for channel in self.channels:
-            u_channels[channel.index] = channel.init(t, u_channels[channel.index], u_comp["v"])
-        return [u_comp, u_channels]
+        u_self, u_c = self.all_states if u is None else u
+        if "comp" in self.key:
+            for key, ext in self.externals.items():
+                u_self[key] = sum(f(t, u) for f in ext)
+            for c in self.children: 
+                u_c[c.index] = c.init(t, u_c[c.index], u_self["v"])
+            return [u_self, u_c]
+        else:
+            return [u_self, [c.init(t, u_c[c.index]) for c in self.children]]

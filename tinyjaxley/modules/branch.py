@@ -1,35 +1,26 @@
-from .base import Module
-import jax.numpy as jnp
+from jax import Array
+
 from ..utils import g_ij
-import jax
+from .base import Module
+
 
 class Branch(Module):
-    k_ij: list[tuple[int, int]]
-    
+    G: dict[tuple[int, int], Array]
     def __init__(self, compartments):
         super().__init__(None, compartments)
-        N = len(self.children)
-        G = jnp.eye(N, k=-1) + jnp.eye(N, k=1)
-        self.k_ij = jnp.stack(jnp.where(G)).T.tolist()
+        self.G = {}
+        for child_i, child_j in zip(self.children[1:], self.children[:-1]):
+            self.G[(child_i.index, child_j.index)] = g_ij(child_i.p, child_j.p)
+            self.G[(child_j.index, child_i.index)] = g_ij(child_j.p, child_i.p)
 
     @property
     def comps(self):
         return self.children
 
-    def vf(self, t, u, p):
+    def vf(self, t, u, args = None):
         u_branch, u_children = u
-        p_branch, p_children = p
 
-        du = u_children
-        # for i, comp in enumerate(self.children):
-        #     du.append(comp.vf(t, u_children[i], p_children[i]))
-
-
-
-        # def _vf(comp, u_i, p_i): return comp.vf(t, u_i, p_i)
-        # du = jax.tree_map(_vf, self.children, u_children, p_children)
-        
-        # TODO: Fix this!
-        # for i,j in self.k_ij:
-        #     du[i]["v"] += g_ij(p_children[i], p_children[j]) * (u_children[j]["v"] - u_children[i]["v"])
-        return [{}, du]
+        du_children = [comp.vf(t, u_children[comp.index]) for comp in self.children]
+        for (i,j), g_ij in self.G.items():
+            du_children[i][0]["v"] += g_ij * (u_children[j][0]["v"] - u_children[i][0]["v"])
+        return [{}, du_children]

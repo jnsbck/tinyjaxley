@@ -1,12 +1,11 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+
 from ..tree import Node
+
 
 class Channel(Node):
     def __init__(self, p = {}, u = {}):
-        super().__init__()
-        self.u["i"] = 0.0
-        self.u.update(u)
-        self.p.update(p)
+        super().__init__(p = p, u = {"i": 0.0, **u})
 
     @abstractmethod
     def vf(self, t, u, v): return u

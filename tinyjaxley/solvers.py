@@ -1,5 +1,7 @@
 import jax.numpy as jnp
+
 from .utils import safe_exp, taux, xinf
+
 
 def fw_euler(du, u, t, dt = 0.025): 
     return u + du * dt, t + dt

@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 from collections import ChainMap
 from typing import List
-from jax import Array
+
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
+
 
 class Node(eqx.Module):
     parent: Node | None
@@ -12,12 +15,12 @@ class Node(eqx.Module):
     u: dict[str, Array] = eqx.field(converter=lambda x: {k: jnp.asarray([v]) for k, v in x.items()})
     p: dict[str, Array] = eqx.field(converter=lambda x: {k: jnp.asarray([v]) for k, v in x.items()})
 
-    def __init__(self, parent = None, children = [], index = 0):
+    def __init__(self, parent = None, children = [], index = 0, u = {}, p = {}):
         self.parent = parent
         self.children = self.init_children(children)
         self.index = index
-        self.u = {}
-        self.p = {}
+        self.u = u
+        self.p = p
 
     @property
     def key(self):
@@ -81,8 +84,8 @@ class Node(eqx.Module):
             header, key = ref if len(ref) == 2 else (None, ref[0])
             def _set(x):
                 cond = header is None or header in x.key
-                if key in x.p and cond: x.p[key] = v
-                elif key in x.u and cond: x.u[key] = v
+                if key in x.p and cond: x.p[key] = v if isinstance(v, jnp.ndarray) else jnp.asarray([v])
+                elif key in x.u and cond: x.u[key] = v if isinstance(v, jnp.ndarray) else jnp.asarray([v])
             return _set 
         self.tree_map(setter(ref, value))
         

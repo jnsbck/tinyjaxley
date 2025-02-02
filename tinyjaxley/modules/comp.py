@@ -1,21 +1,23 @@
-from .base import Module
-from typing import List, Callable
-import jax.numpy as jnp
 from math import pi
-from ..utils import find
+from typing import Callable, List
+
 import jax
+import jax.numpy as jnp
+
+from ..utils import find
+from .base import Module
+
 
 class Compartment(Module):
     recordings: List[str]
     externals: dict[str, List[Callable]]
+    xyzr: jnp.ndarray
 
-    def __init__(self, channels = []):
-        super().__init__(None, channels)
+    def __init__(self, channels = [], u = {"v": -70.0, "i": 0.0}, p = {"r": 1.0, "l": 10.0, "c": 1.0, "Ra": 5000.0}):
+        super().__init__(None, channels, u=u, p=p)
         self.recordings = []
         self.externals = {}
-        self.p.update({"r": 1.0, "l": 10.0, "c": 1.0, "Ra": 5000.0})
-        self.u.update({"v": -70.0, "i": 0.0})
-        # self._xyzr = jnp.array([[0.0, 0.0, 0.0, self.get(("comp", "r"))]])
+        self.xyzr = jnp.array([[0.0, 0.0, 0.0, self.p["r"]]])
         # self._groups = {}
 
     @property
@@ -30,7 +32,7 @@ class Compartment(Module):
         area = 2.0 * pi * self.p["r"] * self.p["l"] # μm²
         return u["i"] / area * 1e5  # nA/μm² -> μA/cm²
     
-    def vf(self, t, u, args):
+    def vf(self, t, u, args = None):
         u_comp, u_channels = u
 
         for key, ext in self.externals.items():

@@ -1,5 +1,6 @@
+from ..utils import _vtrap, safe_exp, taux, xinf
 from .channel import Channel
-from ..utils import safe_exp, _vtrap, taux, xinf
+
 
 def α_m(v): return 0.1 * _vtrap(-(v + 40), 10)
 def β_m(v): return 4.0 * safe_exp(-(v + 65) / 18)

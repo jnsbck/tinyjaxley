@@ -1,6 +1,9 @@
-from ..tree import Module
 from copy import deepcopy
+
 import pandas as pd
+
+from ..tree import Module
+
 
 class Network(Module):
     def __init__(self, cells):

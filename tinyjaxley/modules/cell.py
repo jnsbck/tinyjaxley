@@ -1,6 +1,8 @@
-from ..tree import Module
 import jax.numpy as jnp
+
+from ..tree import Module
 from ..utils import g_ij
+
 
 class Cell(Module):
     def __init__(self, branches = None, branch_tree = None):
