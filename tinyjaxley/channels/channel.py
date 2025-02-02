@@ -2,24 +2,20 @@ from abc import ABC, abstractmethod
 from ..tree import Node
 
 class Channel(Node):
-    def __init__(self, params = {}, states = {}):
-        super().__init__(None, None)
-        self._states["i"] = 0.0
-        self._states.update(states)
-        self._params.update(params)
+    def __init__(self, p = {}, u = {}):
+        super().__init__()
+        self.u["i"] = 0.0
+        self.u.update(u)
+        self.p.update(p)
 
-    @staticmethod
     @abstractmethod
-    def vf(u, p, t): return u
+    def vf(self, t, u, v): return u
 
-    @staticmethod
     @abstractmethod
-    def α(v): return {}
+    def α(self, v): return {}
     
-    @staticmethod
     @abstractmethod
-    def β(v): return {}
+    def β(self, v): return {}
     
-    @staticmethod
     @abstractmethod
-    def init(t, u, p, v): return u
+    def init(self, t, u, v): return u

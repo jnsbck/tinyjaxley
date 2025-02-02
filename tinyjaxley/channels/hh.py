@@ -18,58 +18,46 @@ def i_k(t, u, p, v): return p["g"] * u["n"]**4 * (v - p["e"])
 
 class Leak(Channel):
     def __init__(self): 
-        super().__init__(params = {"g": 0.0003, "e": -54.3}, states = {})
+        super().__init__(p = {"g": 0.0003, "e": -54.3}, u = {})
     
-    @staticmethod
-    def vf(t, u, p, v): 
-        return {"i": i_leak(t, u, p, v)}
+    def vf(self, t, u, v): 
+        return {"i": i_leak(t, u, self.p, v)}
     
-    @staticmethod
-    def α(v): return  {}
+    def α(self, v): return  {}
 
-    @staticmethod
-    def β(v): return {}
+    def β(self, v): return {}
 
-    @staticmethod
-    def init(t, u, p, v):
-        return {"i": i_leak(t, u, p, v)}
+    def init(self, t, u, v):
+        return {"i": i_leak(t, u, self.p, v)}
 
 class Na(Channel):
     def __init__(self): 
-        super().__init__(params = {"g": 0.12, "e": 50.0}, states = {"m": 0.2, "h": 0.2})
+        super().__init__(p = {"g": 0.12, "e": 50.0}, u = {"m": 0.2, "h": 0.2})
     
-    @staticmethod
-    def vf(t, u, p, v): 
-        return {"i": i_na(t, u, p, v), "m": dm(t, u, p, v), "h": dh(t, u, p, v)}
+    def vf(self, t, u, v): 
+        return {"i": i_na(t, u, self.p, v), "m": dm(t, u, self.p, v), "h": dh(t, u, self.p, v)}
     
-    @staticmethod
-    def α(v):
+    def α(self, v):
         return {"m": α_m(v), "h": α_h(v)}
     
-    @staticmethod
-    def β(v):
+    def β(self, v):
         return {"m": β_m(v), "h": β_h(v)}
     
-    @staticmethod
-    def init(t, u, p, v): 
-        return {"i": i_na(t, u, p, v), "m": xinf(v, α_m, β_m), "h": xinf(v, α_h, β_h)}
+    def init(self, t, u, v): 
+        return {"i": i_na(t, u, self.p, v), "m": xinf(v, α_m, β_m), "h": xinf(v, α_h, β_h)}
 
 class K(Channel):
     def __init__(self): 
-        super().__init__(params = {"g": 0.036, "e": -77.0}, states = {"n": 0.2})
+        super().__init__(p = {"g": 0.036, "e": -77.0}, u = {"n": 0.2})
     
-    @staticmethod
-    def vf(t, u, p, v): 
-        return {"i": i_k(t, u, p, v), "n": dn(t, u, p, v)}
+    def vf(self, t, u, v): 
+        return {"i": i_k(t, u, self.p, v), "n": dn(t, u, self.p, v)}
     
-    @staticmethod
-    def α(v):
+    def α(self, v):
         return {"n": α_n(v)}
     
-    @staticmethod
-    def β(v):
+    def β(self, v):
         return {"n": β_n(v)}
     
-    @staticmethod
-    def init(t, u, p, v): 
-        return {"i": i_k(t, u, p, v), "n": xinf(v, α_n, β_n)}
+    def init(self, t, u, v): 
+        return {"i": i_k(t, u, self.p, v), "n": xinf(v, α_n, β_n)}

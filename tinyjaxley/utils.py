@@ -19,21 +19,6 @@ def find(keys, tree, fill_leaf = None):
     mapped = jtu.tree_map_with_path(process_leaf, tree)
     return jtu.tree_map(lambda x: x, mapped)
 
-
-def nested_dict_to_df(d):
-    def get_nested_kv(d, pad=""): 
-        keys, values = [], []
-        for k,v in d.items():
-            kk, vv = get_nested_kv(v, k) if isinstance(v, (dict, ChainMap)) else ([(pad, k)], [v])
-            keys += kk
-            values += vv
-        return keys, values
-
-    keys, values = get_nested_kv(d)
-    keys = [k if k[0] != "" else k[::-1] for k in keys]
-    df = pd.DataFrame([values], columns=pd.MultiIndex.from_tuples(keys))
-    return df
-
 def g_ij(p_i, p_j):
     """
     from `https://en.wikipedia.org/wiki/Compartmental_neuron_models`.

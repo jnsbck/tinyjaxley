@@ -1,15 +1,23 @@
-from copy import deepcopy
-from abc import ABC, abstractmethod
+from __future__ import annotations
 from collections import ChainMap
+from typing import List
+from jax import Array
+import equinox as eqx
+import jax.numpy as jnp
 
-class Node(ABC):
+class Node(eqx.Module):
+    parent: Node | None
+    children: List[Node]
+    index: int
+    u: dict[str, Array] = eqx.field(converter=lambda x: {k: jnp.asarray([v]) for k, v in x.items()})
+    p: dict[str, Array] = eqx.field(converter=lambda x: {k: jnp.asarray([v]) for k, v in x.items()})
+
     def __init__(self, parent = None, children = [], index = 0):
-        self._parent = parent
-        self._children = None
+        self.parent = parent
+        self.children = self.init_children(children)
         self.index = index
-        self._states = {}
-        self._params = {}
-        self.children = children
+        self.u = {}
+        self.p = {}
 
     @property
     def key(self):
@@ -20,77 +28,64 @@ class Node(ABC):
         return len(self.children) == 0
     
     def is_root(self):
-        return self._parent is None
-    
-    @property
-    def parent(self):
-        return self._parent
-    
-    @parent.setter
-    def parent(self, parent):
-        self._parent = parent
+        return self.parent is None
 
     @property
     def parents(self):
         if self.is_root(): return []
         return [self.parent] + self.parent.parents
-
-    @property
-    def children(self):
-        return self._children
     
-    @children.setter
-    def children(self, children):
-        if children is not None:
-            self._children = []
-            for i, c in enumerate(children):
-                new_child = deepcopy(c)
-                new_child.index = i
-                new_child.parent = self
-                self._children += [new_child]
-
-    def keys(self):
-        if self.is_leaf(): return [self.key]
-        return [self.key] + [c.key for c in self.children]
-
+    def init_children(self, children):
+        init_children = []
+        for i, c in enumerate(children):
+            c = eqx.tree_at(lambda x: x.index, c, i)    
+            c = eqx.tree_at(lambda x: x.parent, c, self)
+            init_children += [c]
+        return init_children
+    
     def tree_map(self, f):
-        return f(self) if self.is_leaf() else [f(self), [c.tree_map(f) for c in self.children]]
-      
+        if self.is_leaf(): return f(self)
+        else: return [f(self), [c.tree_map(f) for c in self.children]]
+    
+    def tree_filter(self, f):
+        if f(self): return self
+        else: return [c.tree_filter(f) for c in self.children]
+
     @property
-    def states(self):
-        return self.tree_map(lambda x: x._states)
+    def all_states(self):
+        return self.tree_map(lambda x: x.u)
         
     @property
-    def params(self):
-        return self.tree_map(lambda x: x._params)
+    def all_params(self):
+        return self.tree_map(lambda x: x.p)
     
     @property
-    def params_states(self):
-        return self.tree_map(lambda x: ChainMap(x._states, x._params))
+    def all_params_states(self):
+        return self.tree_map(lambda x: ChainMap(x.u, x.p))
     
-    # TODO: Implement this!
-    # def get(self, ref):
-    #     ref = ref if isinstance(ref, tuple) else (ref,)
-        
-    #     data = self.params_states
-    #     node_keys = self.keys()
-    #     for k in ref:
-    #         idx = node_keys.index(k) if k in node_keys else k
-    #         data = data[idx]
-    #     return data
+    def get(self, ref):
+        def getter(ref):
+            ref = ref if isinstance(ref, tuple) else (ref,)
+            header, key = ref if len(ref) == 2 else (None, ref[0])
+            def _get(x):
+                cond = header is None or header in x.key
+                if key in x.p and cond: return x.p[key]
+                elif key in x.u and cond: return x.u[key]
+                else: return None
+            return _get
+        return self.tree_map(getter(ref))
 
-    # def set(self, ref, value):
-    #     ref = ref if isinstance(ref, tuple) else (ref,)
+    def set(self, ref, value):
+        def setter(ref, v):
+            ref = ref if isinstance(ref, tuple) else (ref,)
+            header, key = ref if len(ref) == 2 else (None, ref[0])
+            def _set(x):
+                cond = header is None or header in x.key
+                if key in x.p and cond: x.p[key] = v
+                elif key in x.u and cond: x.u[key] = v
+            return _set 
+        self.tree_map(setter(ref, value))
         
-    #     data = self.params_states
-    #     node_keys = self.keys()
-    #     for k in ref[:-1]:
-    #         idx = node_keys.index(k) if k in node_keys else k
-    #         data = data[idx]
-        
-    #     idx = node_keys.index(ref[-1]) if ref[-1] in node_keys else ref[-1]
-    #     data[idx] = value
-
     def __getitem__(self, index):
         view = self
         index = index if isinstance(index, tuple) else (index,)
@@ -102,7 +97,7 @@ class Node(ABC):
         yield from self.children
 
     def at(self, index):
-        if self.children is not None:
+        if not self.is_leaf(): 
             return self.children[index]
     
     def __repr__(self, indent = ""):

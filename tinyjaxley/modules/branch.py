@@ -4,6 +4,8 @@ from ..utils import g_ij
 import jax
 
 class Branch(Module):
+    k_ij: list[tuple[int, int]]
+    
     def __init__(self, compartments):
         super().__init__(None, compartments)
         N = len(self.children)
@@ -17,8 +19,15 @@ class Branch(Module):
     def vf(self, t, u, p):
         u_branch, u_children = u
         p_branch, p_children = p
-        def _vf(comp, u_i, p_i): return comp.vf(t, u_i, p_i)
-        du = jax.tree_map(_vf, self.children, u_children, p_children)
+
+        du = u_children
+        # for i, comp in enumerate(self.children):
+        #     du.append(comp.vf(t, u_children[i], p_children[i]))
+
+
+
+        # def _vf(comp, u_i, p_i): return comp.vf(t, u_i, p_i)
+        # du = jax.tree_map(_vf, self.children, u_children, p_children)
         
         # TODO: Fix this!
         # for i,j in self.k_ij:

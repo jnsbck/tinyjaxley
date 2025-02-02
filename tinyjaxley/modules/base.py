@@ -1,8 +1,9 @@
 from ..tree import Node
-from copy import copy, deepcopy
+from copy import copy
 import pandas as pd
-from ..utils import nested_dict_to_df, comp_only
-
+from ..utils import comp_only
+import equinox as eqx
+import jax.numpy as jnp
 class Module(Node):
     def __init__(self, parent = None, children = []):
         super().__init__(parent, children)
@@ -17,21 +18,16 @@ class Module(Node):
                 return self.at
 
     def show(self):
-        # TODO: Simplify this.
-        param_states = []
-        inds = []
+        rows = []
         for comp in self.flatten(comps_only=True):
-            if not comp.is_leaf():
-                channel_keys = [c.key for c in comp.children]
-                node_ps, channel_ps = comp.params_states
-                node_ps = {comp.key: node_ps}
-                channel_ps = {k: v for k, v in zip(channel_keys, channel_ps)}
-                param_states += [{**node_ps, **channel_ps}]
-            else:
-                param_states += [comp.params_states]
-            inds += [comp.index]
-        df = pd.concat([nested_dict_to_df(d) for d in param_states])
-        df.index = inds
+            df_data = {
+                **{('comp', k): [v] for k, v in {**comp.p, **comp.u}.items()},
+                **{(c.key, k): [v] for c in comp.children for k, v in {**c.p, **c.u}.items()}
+            }
+            rows.append(pd.DataFrame(df_data, index=[comp.index]))
+        df = pd.concat(rows)
+        is_1d_array = lambda x: isinstance(x, jnp.ndarray) and x.size == x.ndim == 1
+        df = df.map(lambda x: x.item() if is_1d_array(x) else x)
         return df
 
     @property
@@ -45,7 +41,7 @@ class Module(Node):
         # TODO: Fix this!
         flat_module = copy(self)
         comps = [comp for i, comp in enumerate(self.flatten(comps_only=True)) if i in index]
-        flat_module._children = comps
+        flat_module.children = comps
         return flat_module
 
     def flatten(self, comps_only = False):
@@ -54,37 +50,35 @@ class Module(Node):
         return super().flatten()
     
     @comp_only
-    def insert(self, submodule):
-        self._children.append(deepcopy(submodule))
-        for i, sm in enumerate(self.children):
-            sm.index = i
-            sm.parent = self
+    def insert(self, channel):
+        channel = eqx.tree_at(lambda x: x.parent, channel, self)
+        channel = eqx.tree_at(lambda x: x.index, channel, len(self.children))
+        self.children.append(channel)
 
     @comp_only
     def record(self, key):
-        self._recordings.append(key)
+        self.recordings.append(key)
 
     @comp_only
-    def clamp(self, key, value):
-        if key not in self._externals:
-            self._externals[key] = []
-        self._externals[key] += [value]
+    def clamp(self, key, func):
+        if key not in self.externals:
+            self.externals[key] = []
+        self.externals[key] += [func]
 
     @comp_only
-    def stimulate(self, value):
-        self.clamp("i", value)
+    def stimulate(self, func):
+        self.clamp("i", func)    
 
     # @comp_only
     # def xyzr(self):
     #     pass
 
-    # def init(self, t = 0, u = None, p = None):
-    #     u = self.states if u is None else u
-    #     p = self.params if p is None else p
-    #     for key, ext in self._externals.items():
-    #         u[key] =  sum(f(t, u, p) for f in ext)
-    #         self.states = {key: u[key]}
-    #     for cname, channel in self._channels.items():
-    #         u[cname] = channel.init(t, u[cname], p[cname], u["v"])
-    #         self.states = {cname: u[cname]}
-    #     return u
+    @comp_only
+    def init(self, t = 0, u = None):
+        u = self.all_states if u is None else u
+        u_comp, u_channels = u
+        for key, ext in self.externals.items():
+            u_comp[key] = sum(f(t, u) for f in ext)
+        for channel in self.channels:
+            u_channels[channel.index] = channel.init(t, u_channels[channel.index], u_comp["v"])
+        return [u_comp, u_channels]
