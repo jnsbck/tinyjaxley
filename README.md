@@ -4,20 +4,25 @@ A minimalistic implementation of [jaxley](https://github.com/jaxleyverse/jaxley)
 
 
 ## todos:
-- [ ] port Modules to equinox
+- [x] port Modules to equinox
 
-- [ ] make branches work
+- [x] make comp works
+- [x] make channels work
+- [x] make branches work
 - [ ] make cells work
-- [ ] make networks work
+- [ ] custom solvers (tridiax?)
+
+- [ ] make it fast! (compile and runtime!) (add regression tests)
 
 - [ ] gradients / optimization
-
-- [ ] custom solvers (tridiax?)
 - [ ] swc reader
-- [ ] support more flexible indexing
-    - [ ] more ways to index (ints, ranges, lists etc.)
-- [ ] make recording / clamping work
-- [ ] make it fast! (add regression tests)
+- [ ] make networks work
+    - [ ] add synapses
+
+- [ ] add tests
+- [ ] add docs
 
 
-- [ ] fix slow JIT compilation
+- [ ] API sugar
+    - [ ] support more flexible indexing, manipulation and viewing
+    - [ ] make recording / clamping work

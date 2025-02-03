@@ -64,9 +64,6 @@ class Module(Node):
     def stimulate(self, func):
         self.clamp("i", func)    
 
-    def xyzr(self):
-        return jnp.concatenate([comp.xyzr for comp in self.flatten(comps_only=True)])
-
     def init(self, t = 0, u = None):
         u_self, u_c = self.all_states if u is None else u
         if "comp" in self.key:
