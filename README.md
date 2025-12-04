@@ -1,28 +1,35 @@
 # tinyjaxley
 
-A minimalistic implementation of [jaxley](https://github.com/jaxleyverse/jaxley).
+A minimalist implementation of [jaxley](https://github.com/jaxleyverse/jaxley).
 
+The current linecount is:
+![linecount.txt]
 
 ## todos:
-- [x] port Modules to equinox
+Simulation
+- [ ] working comps (single compartments)
+- [ ] working branches (cable)
+- [ ] working cells (branched morphologies)
+    - [ ] add recording API
+- [ ] Add clamping (set) and stimuli (add) for states and currents
+- [ ] swc reader
+    - [ ] NEURON backend
+    - [ ] custom backend
+- [ ] working networks (synapses)
 
-- [x] make comp works
-- [x] make channels work
-- [x] make branches work
-- [ ] make cells work
-- [ ] custom solvers (tridiax?)
-
+Optimization
+- [ ] gradients / optimization
+    - [ ] add `filter_trainables` (for `eqx.partition`)
+    - [ ] add custom optimizer
+    - [ ] (add parameter and state sharing)
+    - [ ] ddd transforms
 - [ ] make it fast! (compile and runtime!) (add regression tests)
 
-- [ ] gradients / optimization
-- [ ] swc reader
-- [ ] make networks work
-    - [ ] add synapses
-
+Infrastructure
 - [ ] add tests
+    - [ ] match Jaxley
 - [ ] add docs
 
-
-- [ ] API sugar
-    - [ ] support more flexible indexing, manipulation and viewing
-    - [ ] make recording / clamping work
+API sugar and BONUS
+- [ ] support more flexible indexing, manipulation and viewing
+- [ ] jaxley/.nmodl channel transpiler

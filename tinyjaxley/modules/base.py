@@ -9,7 +9,7 @@ import networkx as nx
 from typing import List, Union
 from ..mechanisms.channel import Channel
 from ..mechanisms.external import Stimulus, Clamp
-from ..utils import tree_set_with_path, tree_path_of_leaves
+from ..utils import tree_set_with_path, tree_apply_with_path
 
 
 class Module(eqx.Module):
@@ -17,6 +17,7 @@ class Module(eqx.Module):
     r: Array = eqx.field(converter=jnp.array)
     c: Array = eqx.field(converter=jnp.array)
     Ra: Array = eqx.field(converter=jnp.array)
+    xyz: Array = eqx.field(converter=jnp.array)
     channels: dict[str, Channel]
     stimuli: dict[str, Stimulus]  # add to state or current
     clamps: dict[str, Clamp]  # set state or current
@@ -25,7 +26,7 @@ class Module(eqx.Module):
     edges: Array = eqx.field(converter=jnp.array)
 
     def __init__(
-        self, l: Array = 10.0, r: Array = 1.0, c: Array = 1.0, Ra: Array = 5000.0
+        self, l: Array = 10.0, r: Array = 1.0, c: Array = 1.0, Ra: Array = 10_000.0
     ):
         self.l = l
         self.r = r
@@ -35,12 +36,12 @@ class Module(eqx.Module):
         self.stimuli = {}
         self.clamps = {}
         self.parent = jnp.array(-1)
-
+        self.xyz = jnp.array([0.0, 0.0, 0.0])
         self.edges = self._edges_init()  # needs to be rerun if parents change
 
     @property
     def area(self):
-        return 2.0 * jnp.pi * self.r * self.l
+        return 2.0 * jnp.pi * self.r * self.l * 1e-4  # um² -> cm²
 
     def _edges_init(self):
         if self.parent.size > 1:
@@ -60,9 +61,11 @@ class Module(eqx.Module):
         Ra_i, Ra_j = self.Ra[i], self.Ra[j]
         l_i, l_j = self.l[i], self.l[j]
         g = r_i * r_j**2 / (Ra_i * r_j**2 * l_i + Ra_j * r_i**2 * l_j) / l_i
-        return g * 10**7  # S/cm/um -> mS / cm²
+        # TODO: check units
+        return g * 1e7  # S/cm/um -> mS / cm²
 
     def __call__(self, t, u, args=None):
+        # TODO: Use seperate diffrax.ODETerms for channels and comp??
         is_instance = lambda cls: lambda x: isinstance(x, cls)
         v_at = lambda u, c: u["v"][c.index] if u["v"].size > 1 else u["v"]
 
@@ -80,8 +83,8 @@ class Module(eqx.Module):
         i_ext = jax.tree.map(i_dist, self.stimuli, is_leaf=is_instance(Stimulus))
         # i_clamp = jax.tree.map(i_dist, self.clamps, is_leaf=is_instance(Clamp))
 
-        i_ext = jax.tree.reduce(lambda x, y: x + y, i_ext)
-        i_int = jax.tree.reduce(lambda x, y: x + y, i_int)
+        i_ext_total = jax.tree.reduce(lambda x, y: x + y, i_ext)
+        i_int_total = jax.tree.reduce(lambda x, y: x + y, i_int)
 
         du = jax.tree.map(
             lambda c: c(t, u[c.name], v_at(u, c)),
@@ -89,14 +92,17 @@ class Module(eqx.Module):
             is_leaf=is_instance(Channel),
         )
 
-        v_ii = (i_ext - i_int) / self.c  # (i_ext / self.area - i_int) / self.c
+        dv_ii = (
+            i_ext_total - i_int_total
+        ) / self.c  # (i_ext / self.area - i_int) / self.c
 
         # TODO: Fix the units
         # TODO: Add solver for linear system
         i, j = self.edges.T
-        v_ij = self.G(i, j) * (u["v"][j] - u["v"][i])
+        dv_ij = self.G(i, j) * (u["v"][j] - u["v"][i])
+        dv_ji = self.G(j, i) * (u["v"][i] - u["v"][j])
 
-        du["v"] = v_ii.at[i].add(v_ij)
+        du["v"] = dv_ii.at[i].add(dv_ij).at[j].add(dv_ji)  # * 1e3 # mA/cm² -> μA/cm²
         return du
 
     def set(self, set_dict):
@@ -141,6 +147,50 @@ class Module(eqx.Module):
             return eqx.tree_at(lambda x: x.clamps, self, clamps)
         else:
             raise ValueError(f"Invalid type: {type(mech)}")
+
+    # def remove(self, path: str):
+    #     pass
+
+    def train_mask(self, paths: dict[str, Array], init_mask: "Module" = None):
+        if init_mask is None:  # all false by default
+            set_false = lambda x: jnp.full(x.shape, False) if eqx.is_array(x) else False
+            init_mask = jax.tree.map(set_false, self)
+
+        def setter(at):
+            def set_true(x):
+                return x.at[at].set(True) if at is not None else x.at[:].set(True)
+
+            return set_true
+
+        return tree_apply_with_path(
+            init_mask, {p: setter(at) for p, at in paths.items()}
+        )
+
+    def share_mask(self, groups: dict[str, Array], init_mask: "Module" = None):
+        if init_mask is None:
+            default_mask = lambda x: jnp.full(x.shape, 0) if eqx.is_array(x) else 0
+            init_mask = jax.tree.map(default_mask, self)
+
+        group_offset = jnp.max(jax.flatten_util.ravel_pytree(init_mask)[0]) + 1
+
+        def group_setter(at, i):
+            i += group_offset
+
+            def set_group(x):
+                return x.at[at].set(i) if at is not None else x.at[:].set(i)
+
+            return set_group
+
+        return tree_apply_with_path(
+            init_mask,
+            {p: group_setter(at, i) for i, (p, at) in enumerate(groups.items())},
+        )
+
+    # def group(self, index)
+    #     pass
+
+    # def at(self, index):
+    #     pass
 
     def pd_render(self):
         df = pd.DataFrame()
