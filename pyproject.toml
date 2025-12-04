@@ -14,7 +14,6 @@ dependencies = [
     "numpy>=2.2.1",
     "pandas>=2.2.3",
     "ruff>=0.14.8",
-    "sbi>=0.22.0",
 ]
 
 [dependency-groups]
