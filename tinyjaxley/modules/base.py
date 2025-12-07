@@ -11,6 +11,8 @@ from ..mechanisms.channel import Channel
 from ..mechanisms.external import Stimulus, Clamp
 from ..utils import tree_set_with_path, tree_apply_with_path
 
+from typing import Optional
+
 
 class Module(eqx.Module):
     l: Array = eqx.field(converter=jnp.array)
@@ -22,11 +24,20 @@ class Module(eqx.Module):
     stimuli: dict[str, Stimulus]  # add to state or current
     clamps: dict[str, Clamp]  # set state or current
     # synapses: List[Synapse]
+
     parent: Array = eqx.field(converter=jnp.array)
+    index: Array = eqx.field(converter=jnp.array)
+    id: Array = eqx.field(converter=jnp.array)
+
     edges: Array = eqx.field(converter=jnp.array)
 
     def __init__(
-        self, l: Array = 10.0, r: Array = 1.0, c: Array = 1.0, Ra: Array = 10_000.0
+        self,
+        l: Array = 10.0,
+        r: Array = 1.0,
+        c: Array = 1.0,
+        Ra: Array = 10_000.0,
+        key: str = None,
     ):
         self.l = l
         self.r = r
@@ -35,8 +46,12 @@ class Module(eqx.Module):
         self.channels = {}
         self.stimuli = {}
         self.clamps = {}
-        self.parent = jnp.array(-1)
         self.xyz = jnp.array([0.0, 0.0, 0.0])
+
+        self.parent = jnp.array(-1)
+        self.index = jnp.array(0)
+        self.id = jnp.array(0)
+
         self.edges = self._edges_init()  # needs to be rerun if parents change
 
     @property
@@ -45,8 +60,7 @@ class Module(eqx.Module):
 
     def _edges_init(self):
         if self.parent.size > 1:
-            inds = jnp.arange(self.parent.size)
-            edges = jnp.stack([self.parent, inds], axis=1)
+            edges = jnp.stack([self.parent, self.index], axis=1)
             edges = edges[edges[:, 0] != -1]
             return edges
         else:
@@ -151,50 +165,21 @@ class Module(eqx.Module):
     # def remove(self, path: str):
     #     pass
 
-    def train_mask(self, paths: dict[str, Array], init_mask: "Module" = None):
-        if init_mask is None:  # all false by default
-            set_false = lambda x: jnp.full(x.shape, False) if eqx.is_array(x) else False
-            init_mask = jax.tree.map(set_false, self)
-
-        def setter(at):
-            def set_true(x):
-                return x.at[at].set(True) if at is not None else x.at[:].set(True)
-
-            return set_true
-
-        return tree_apply_with_path(
-            init_mask, {p: setter(at) for p, at in paths.items()}
-        )
-
-    def share_mask(self, groups: dict[str, Array], init_mask: "Module" = None):
-        if init_mask is None:
-            default_mask = lambda x: jnp.full(x.shape, 0) if eqx.is_array(x) else 0
-            init_mask = jax.tree.map(default_mask, self)
-
-        group_offset = jnp.max(jax.flatten_util.ravel_pytree(init_mask)[0]) + 1
-
-        def group_setter(at, i):
-            i += group_offset
-
-            def set_group(x):
-                return x.at[at].set(i) if at is not None else x.at[:].set(i)
-
-            return set_group
-
-        return tree_apply_with_path(
-            init_mask,
-            {p: group_setter(at, i) for i, (p, at) in enumerate(groups.items())},
-        )
-
     # def group(self, index)
     #     pass
 
     # def at(self, index):
     #     pass
 
-    def pd_render(self):
+    # def __iter__(self):
+    #     pass
+
+    # def __getitem__(self, index):
+    #     pass
+
+    def render_with_pandas(self):
         df = pd.DataFrame()
-        cols = ["l", "r", "c", "Ra"]
+        cols = ["id", "l", "r", "c", "Ra"]
 
         data = []
         for k in cols:
@@ -207,11 +192,53 @@ class Module(eqx.Module):
                 col[c.index] = np.array(getattr(c, k))
                 data.append(col)
 
-        df = pd.DataFrame(np.column_stack(data), columns=cols)
+        data = np.column_stack(data)
+        df = pd.DataFrame(
+            data, columns=cols, index=np.array(jnp.atleast_1d(self.index))
+        )
         return df
 
-    def nx_render(self):
-        df = self.pd_render()
+    def render_as_string(self, show_attrs: bool = True):
+        G = self.render_with_networkx()
+        D = nx.DiGraph()
+        D.add_edges_from(np.array(self.edges))
+        nx.set_node_attributes(D, G.nodes)
+
+        roots = sorted([n for n in D.nodes() if D.in_degree(n) == 0])
+
+        type_dict = {0: "undefined", 1: "soma", 2: "axon", 3: "dendrite"}
+
+        def _dfs(node, prefix="", is_last=True):
+            lines, attrs = [], D.nodes[node]
+            fmt_attr = lambda k, v: (
+                f"{k}={v:.1f}" if isinstance(v, (int, float)) else f"{k}={v}"
+            )
+            attrs_str = (
+                ", ".join(
+                    fmt_attr(k, v) for k, v in sorted(attrs.items()) if pd.notna(v)
+                )
+                if show_attrs
+                else ""
+            )
+            attrs_part = f"({attrs_str})" if attrs_str else ""
+            label = f"{type_dict[G.nodes[node]['id']]}[{node}]{attrs_part}"
+            children = sorted(D.successors(node))
+            is_root = node in roots
+            symbol = "" if is_root else ("└── " if is_last else "├── ")
+            lines.append(f"{prefix}{symbol}{label}{'/' if children else ''}")
+            for i, child in enumerate(children):
+                child_is_last = i == len(children) - 1
+                if is_root:
+                    next_prefix = ""
+                else:
+                    next_prefix = prefix + ("    " if is_last else "│   ")
+                lines.extend(_dfs(child, next_prefix, child_is_last))
+            return lines
+
+        return "\n".join(line for r in roots for line in _dfs(r, "", r == roots[-1]))
+
+    def render_with_networkx(self):
+        df = self.render_with_pandas()
         G = nx.Graph()
         G.add_edges_from(np.array(self.edges))
         nx.set_node_attributes(G, df.to_dict(orient="index"))
@@ -219,8 +246,10 @@ class Module(eqx.Module):
 
     def render(self, backend: str = "pandas"):
         if backend == "pandas":
-            return self.pd_render()
+            return self.render_with_pandas()
         elif backend == "networkx":
-            return self.nx_render()
+            return self.render_with_networkx()
+        elif backend == "string":
+            return print(self.render_as_string())
         else:
             raise ValueError(f"Invalid backend: {backend}")

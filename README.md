@@ -3,7 +3,7 @@
 A minimalist implementation of [jaxley](https://github.com/jaxleyverse/jaxley).
 
 The current linecount is:
-![linecount.txt]
+[linecount.txt]
 
 ## todos:
 Simulation
@@ -11,6 +11,7 @@ Simulation
 - [ ] working branches (cable)
 - [ ] working cells (branched morphologies)
     - [ ] add recording API
+    - [ ] add state sharing?
 - [ ] Add clamping (set) and stimuli (add) for states and currents
 - [ ] swc reader
     - [ ] NEURON backend
@@ -21,7 +22,8 @@ Optimization
 - [ ] gradients / optimization
     - [ ] add `filter_trainables` (for `eqx.partition`)
     - [ ] add custom optimizer
-    - [ ] (add parameter and state sharing)
+    - [ ] add selecting trainables API
+    - [ ] add parameter sharing
     - [ ] ddd transforms
 - [ ] make it fast! (compile and runtime!) (add regression tests)
 

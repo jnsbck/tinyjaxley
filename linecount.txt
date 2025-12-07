@@ -5,24 +5,11 @@ __init__.py                    0
 mechanisms/channel.py          145
 mechanisms/external.py         83
 mechanisms/__init__.py         0
-modules/base.py                176
+modules/base.py                255
 modules/__init__.py            0
+optimize.py                    89
 solvers.py                     0
 utils.py                       52
 ----------------------------------------
-Total:                         456
-
-
-File                           Lines
-----------------------------------------
-__init__.py                    0
-mechanisms/channel.py          145
-mechanisms/external.py         83
-mechanisms/__init__.py         0
-modules/base.py                226
-modules/__init__.py            0
-solvers.py                     0
-utils.py                       52
-----------------------------------------
-Total:                         506
+Total:                         624
 
