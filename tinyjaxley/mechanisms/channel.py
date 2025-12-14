@@ -60,7 +60,7 @@ class Leak(Channel):
     g: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 0.1, e: Array = -70.0):
+    def __init__(self, g: Array = 0.0003, e: Array = -54.3):
         super().__init__()
         self.g = g
         self.e = e
@@ -79,7 +79,7 @@ class Na(Channel):
     g: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 120.0, e: Array = 50.0):
+    def __init__(self, g: Array = 0.12, e: Array = 50.0):
         super().__init__()
         self.g = g
         self.e = e
@@ -95,8 +95,9 @@ class Na(Channel):
         return {"m": tau_m, "h": tau_h}
 
     def xinf(self, u, v):
-        m_inf = a_m(v) * self.tau(u, v)["m"]
-        h_inf = a_h(v) * self.tau(u, v)["h"]
+        tau = self.tau(u, v)
+        m_inf = a_m(v) * tau["m"]
+        h_inf = a_h(v) * tau["h"]
         return {"m": m_inf, "h": h_inf}
 
     def __call__(self, t, u, v):
@@ -117,7 +118,7 @@ class K(Channel):
     g: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 36.0, e: Array = -75.0):
+    def __init__(self, g: Array = 0.036, e: Array = -77.0):
         super().__init__()
         self.g = g
         self.e = e
@@ -129,9 +130,10 @@ class K(Channel):
     def tau(self, u, v):
         tau_n = 1 / (a_n(v) + b_n(v))
         return {"n": tau_n}
-
+        
     def xinf(self, u, v):
-        n_inf = a_n(v) * self.tau(u, v)["n"]
+        tau = self.tau(u, v)
+        n_inf = a_n(v) * tau["n"]
         return {"n": n_inf}
 
     def __call__(self, t, u, v):

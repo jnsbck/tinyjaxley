@@ -1,12 +1,18 @@
 #!/bin/bash
 
+IGNORE_COMMENTS=${IGNORE_COMMENTS:-False}
+
 printf "\n%-30s %s\n" "File" "Lines"
 printf "%.0s-" {1..40}
 printf "\n"
 
 total=0
 while IFS= read -r file; do
-    lines=$(wc -l < "$file")
+    if [[ "${IGNORE_COMMENTS,,}" == "true" ]] || [[ "${IGNORE_COMMENTS,,}" == "1" ]]; then
+        lines=$(grep -v '^\s*#' "$file" | grep -v '^\s*$' | wc -l)
+    else
+        lines=$(wc -l < "$file")
+    fi
     total=$((total + lines))
     printf "%-30s %d\n" "${file#./tinyjaxley/}" "$lines"
 done < <(find ./tinyjaxley -name "*.py" -not -path "*/\.*" | sort)
