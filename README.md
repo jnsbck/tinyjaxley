@@ -7,11 +7,12 @@ The current linecount is:
 
 ## todos:
 Simulation
-- [ ] working comps (single compartments)
-- [ ] working branches (cable)
-- [ ] working cells (branched morphologies)
+- [x] working comps (single compartments)
+- [x] working branches (cable)
+- [x] working cells (branched morphologies)
     - [ ] add recording API
     - [ ] add state sharing?
+    - [ ] add branchpoints (comp with l=0)
 - [ ] Add clamping (set) and stimuli (add) for states and currents
 - [ ] swc reader
     - [ ] NEURON backend

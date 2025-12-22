@@ -10,15 +10,16 @@ from typing import List, Union
 from ..mechanisms.channel import Channel
 from ..mechanisms.external import Stimulus, Clamp
 from ..utils import tree_set_with_path, tree_apply_with_path
+from jax import vmap
 
 from typing import Optional
 
 
 class Module(eqx.Module):
     l: Array = eqx.field(converter=jnp.array)
-    r: Array = eqx.field(converter=jnp.array)
+    rad: Array = eqx.field(converter=jnp.array)
     c: Array = eqx.field(converter=jnp.array)
-    # Ra: Array = eqx.field(converter=jnp.array)
+    ra: Array = eqx.field(converter=jnp.array)
     xyz: Array = eqx.field(converter=jnp.array)
     channels: dict[str, Channel]
     stimuli: dict[str, Stimulus]  # add to state or current
@@ -34,125 +35,86 @@ class Module(eqx.Module):
     def __init__(
         self,
         l: Array = 10.0,
-        r: Array = 1.0,
+        rad: Array = 1.0,
         c: Array = 1.0,
-        # Ra: Array = 10_000.0,
+        ra: Array = 5000.0,
+        xyz: Array = jnp.array([0.0, 0.0, 0.0]),
+        parents: Array = jnp.array(-1),
+        index: Array = jnp.array(0),
+        id: Array = jnp.array(0),
         key: str = None,
     ):
         self.l = l
-        self.r = r
+        self.rad = rad
         self.c = c
-        # self.Ra = Ra
+        self.ra = ra
         self.channels = {}
         self.stimuli = {}
         self.clamps = {}
-        self.xyz = jnp.array([0.0, 0.0, 0.0])
+        self.xyz = xyz
 
-        self.parent = jnp.array(-1)
-        self.index = jnp.array(0)
-        self.id = jnp.array(0)
+        self.parents = parents
+        self.index = index
+        self.id = id
 
         # TODO: Add post init to initialize edges
         self.edges = self._edges_init()  # needs to be rerun if parents change
 
     @property
     def area(self):
-        return 2.0 * jnp.pi * self.r * self.l  # um²
-
-    def _edges_init(self):
-        if self.parent.size > 1:
-            edges = jnp.stack([self.parent, self.index], axis=1)
-            edges = edges[edges[:, 0] != -1]
-            edges = jnp.concatenate([edges, edges[:, ::-1]])
-            return edges
-        else:
-            return jnp.array([]).reshape(0, 2)
-
-    # TODO: Add branchpoints
-    # def _insert_branchpoints(self):
-    #     pass
+        return 2.0 * jnp.pi * self.rad * self.l  # um²
 
     def G(self, i, j):
         """
         from `https://en.wikipedia.org/wiki/Compartmental_neuron_models`.
         `radius`: um, `Ra`: ohm cm, `l`: um, `g`: mS / cm^2
         """
-        r_i, r_j = self.r[i], self.r[j]
-        Ra_i, Ra_j = self.Ra[i], self.Ra[j]
-        l_i, l_j = self.l[i], self.l[j]
-        g = r_i * r_j**2 / (Ra_i * r_j**2 * l_i + Ra_j * r_i**2 * l_j) / l_i
-        return g * 1e7  # S/cm/um -> mS / cm²
+        rad_i, l_i, ra_i = self.rad[i], self.l[i], self.ra[i]
+        rad_j, l_j, ra_j = self.rad[j], self.l[j], self.ra[j]
+        g_ij = rad_i * rad_j**2 / (ra_i * rad_j**2 * l_i + ra_j * rad_i**2 * l_j) / l_i
+        return g_ij * 1e7
 
     def __call__(self, t, u, args=None):
-        # TODO: Use seperate diffrax.ODETerms for channels and comp??
         is_instance = lambda cls: lambda x: isinstance(x, cls)
-        v_at = lambda u, idx: u["v"][idx] if u["v"].size > 1 else u["v"]
-
         # TODO: Add clamping
-        # TODO: Add state sharing 
-
+        # TODO: Add state sharing
         i0 = jnp.zeros(self.l.size)
 
         def i_dist(c):
-            v = v_at(u, c.index)
-            u_ = u[c.name] if c.name in u else {}
-            i = c.i(t, u_, v)
+            u_ = u.get(c.name, {})
+            i = c.i(t, u_, u["v"][c.index])
             return i0.at[c.index].set(i)
 
         i_int = jax.tree.map(i_dist, self.channels, is_leaf=is_instance(Channel))
         i_ext = jax.tree.map(i_dist, self.stimuli, is_leaf=is_instance(Stimulus))
         # i_clamp = jax.tree.map(i_dist, self.clamps, is_leaf=is_instance(Clamp))
 
-        i_ext_total = jax.tree.reduce(lambda x, y: x + y, i_ext)
-        i_int_total = jax.tree.reduce(lambda x, y: x + y, i_int)
+        i_ext_total = jax.tree.reduce(lambda x, y: x + y, i_ext, initializer=0.0)
+        i_int_total = jax.tree.reduce(lambda x, y: x + y, i_int, initializer=0.0)
 
         du = jax.tree.map(
-            lambda c: c(t, u[c.name], v_at(u, c.index)),
+            lambda c: c(t, u.get(c.name, {}), u["v"][c.index]),
             self.channels,
             is_leaf=is_instance(Channel),
         )
 
-        dv_ii = (i_ext_total  * 1e5 / self.area - i_int_total * 1e3) / self.c
+        dv_ii = (i_ext_total * 1e5 / self.area - i_int_total * 1e3) / self.c
 
-        # TODO: Add solver for linear system
         i, j = self.edges.T
-        # bcco = (i, j, self.G(i, j))
-        dv_ij = self.G(i, j) * (u["v"][j] - u["v"][i])
+        dv_ij = vmap(self.G)(i, j) * (u["v"][j] - u["v"][i])
 
-        du["v"] = dv_ii.at[i].add(dv_ij)
+        du["v"] = dv_ii + jnp.bincount(i, weights=dv_ij, length=len(dv_ii))
         return du
 
-    # def step(self, t0, t1, u0):
-    #     dt = t1 - t0
-    #     v_at = lambda u, idx: u0["v"][idx] if u0["v"].size > 1 else u0["v"]
-    #     is_instance = lambda cls: lambda x: isinstance(x, cls)
+    def _edges_init(self):
+        edges = jnp.stack([self.parent, self.index], axis=1)
+        edges = edges[edges[:, 0] != -1]
+        edges = jnp.concatenate([edges, edges[:, ::-1]])
+        return edges
 
-    #     i0 = jnp.zeros(self.l.size)
-
-    #     def i_dist(c):
-    #         v = v_at(u0, c.index)
-    #         u_ = u0[c.name] if c.name in u0 else {}
-    #         i = c.i(t0, u_, v)
-    #         return i0.at[c.index].set(i)
-
-    #     i_int = jax.tree.map(i_dist, self.channels, is_leaf=is_instance(Channel))
-    #     i_ext = jax.tree.map(i_dist, self.stimuli, is_leaf=is_instance(Stimulus))
-    #     # i_clamp = jax.tree.map(i_dist, self.clamps, is_leaf=is_instance(Clamp))
-
-    #     def step_gate(c):
-    #         _u = u0[c.name] if c.name in u0 else {}
-    #         _v = v_at(u0, c.index)
-    #         xinf = c.xinf(_u, _v)
-    #         tau = c.tau(_u, _v)
-    #         return exp_euler(_u, dt, xinf, tau)
-
-    #     u1_gates = jax.tree.map(step_gate, self.channels, is_leaf=is_instance(Channel))
-    #     u1 = {**u1_gates}
-
-    #     def step_v():
-
-        
-
+    # TODO: Add branchpoints
+    # def _insert_branchpoints(self):
+    #     pass
 
     def set(self, set_dict):
         return tree_set_with_path(self, set_dict)

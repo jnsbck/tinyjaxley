@@ -2,9 +2,10 @@ import jax.numpy as jnp
 import jax
 import equinox as eqx
 
-from jax import ArrayLike
+from jax import Array
 
-def safe_exp(x, max_value: float = 20.0):
+
+def safe_exp(x: Array, max_value: float = 20.0):
     x = jnp.clip(x, a_max=max_value)
     return jnp.exp(x)
 

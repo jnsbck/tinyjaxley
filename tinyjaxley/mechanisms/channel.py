@@ -130,7 +130,7 @@ class K(Channel):
     def tau(self, u, v):
         tau_n = 1 / (a_n(v) + b_n(v))
         return {"n": tau_n}
-        
+
     def xinf(self, u, v):
         tau = self.tau(u, v)
         n_inf = a_n(v) * tau["n"]
