@@ -11,14 +11,14 @@ class Comp(Module):
     def __init__(
         self,
         l: Array = 10.0,
-        rad: Array = 1.0,
+        r: Array = 1.0,
         c: Array = 1.0,
         xyz: Array = jnp.array([0.0, 0.0, 0.0]),
         index: Array = jnp.array(0),
         id: Array = jnp.array(0),
         key: str = None,
     ):
-        super().__init__(l=l, rad=rad, c=c, xyz=xyz, index=index, id=id, key=key)
+        super().__init__(l=l, r=r, c=c, xyz=xyz, index=index, id=id, key=key)
 
     def __call__(self, t, u, args=None):
         is_instance = lambda cls: lambda x: isinstance(x, cls)

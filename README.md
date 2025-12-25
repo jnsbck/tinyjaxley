@@ -13,10 +13,12 @@ Simulation
     - [ ] add recording API
     - [ ] add state sharing?
     - [ ] add branchpoints (comp with l=0)
+    - [ ] rm parents in fav of only edges
 - [ ] Add clamping (set) and stimuli (add) for states and currents
 - [ ] swc reader
     - [ ] NEURON backend
     - [ ] custom backend
+    - [ ] non-cylindrical comps (res_loads, area)
 - [ ] working networks (synapses)
 
 Optimization

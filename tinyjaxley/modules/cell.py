@@ -8,8 +8,9 @@ from jax import Array
 
 class Cell(Module):
     def __init__(self, branches: list[Branch], parents: Array):
-        stack_leaves = lambda *lvs: jnp.hstack(lvs) if eqx.is_array(lvs[0]) else lvs[0]
-
+        stack_leaves = (
+            lambda *lvs: jnp.concatenate(lvs) if eqx.is_array(lvs[0]) else lvs[0]
+        )
         comp_parents = self._combine_parents(branches, parents)
 
         comps = jax.tree.map(stack_leaves, *branches)
@@ -17,7 +18,7 @@ class Cell(Module):
         comps = eqx.tree_at(lambda x: x.parents, comps, comp_parents)
         super().__init__(
             l=comps.l,
-            rad=comps.rad,
+            r=comps.r,
             c=comps.c,
             ra=comps.ra,
             xyz=comps.xyz,
@@ -29,8 +30,8 @@ class Cell(Module):
     def _combine_parents(self, branches: list[Branch], parents: Array):
         cumsum_leading_zero = lambda x: jnp.concatenate([jnp.array([0]), jnp.cumsum(x)])
 
-        branch_sizes = jnp.array([b.parent.size for b in branches])
-        local_parents = jnp.concatenate([b.parent for b in branches])
+        branch_sizes = jnp.array([b.parents.size for b in branches])
+        local_parents = jnp.concatenate([b.parents for b in branches])
 
         branch_offsets = cumsum_leading_zero(branch_sizes[:-1])
         comp_parents = local_parents + jnp.repeat(branch_offsets, branch_sizes)

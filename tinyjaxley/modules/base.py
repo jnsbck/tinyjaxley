@@ -5,8 +5,9 @@ import jax
 import numpy as np
 import pandas as pd
 import networkx as nx
-
 from typing import List, Union
+
+from ..mechanisms.mechanism import Mechanism
 from ..mechanisms.channel import Channel
 from ..mechanisms.external import Stimulus, Clamp
 from ..utils import tree_set_with_path, tree_apply_with_path
@@ -17,7 +18,7 @@ from typing import Optional
 
 class Module(eqx.Module):
     l: Array = eqx.field(converter=jnp.array)
-    rad: Array = eqx.field(converter=jnp.array)
+    r: Array = eqx.field(converter=jnp.array)
     c: Array = eqx.field(converter=jnp.array)
     ra: Array = eqx.field(converter=jnp.array)
     xyz: Array = eqx.field(converter=jnp.array)
@@ -26,7 +27,7 @@ class Module(eqx.Module):
     clamps: dict[str, Clamp]  # set state or current
     # synapses: List[Synapse]
 
-    parent: Array = eqx.field(converter=jnp.array)
+    parents: Array = eqx.field(converter=jnp.array)
     index: Array = eqx.field(converter=jnp.array)
     id: Array = eqx.field(converter=jnp.array)
 
@@ -35,7 +36,7 @@ class Module(eqx.Module):
     def __init__(
         self,
         l: Array = 10.0,
-        rad: Array = 1.0,
+        r: Array = 1.0,
         c: Array = 1.0,
         ra: Array = 5000.0,
         xyz: Array = jnp.array([0.0, 0.0, 0.0]),
@@ -45,7 +46,7 @@ class Module(eqx.Module):
         key: str = None,
     ):
         self.l = l
-        self.rad = rad
+        self.r = r
         self.c = c
         self.ra = ra
         self.channels = {}
@@ -62,21 +63,21 @@ class Module(eqx.Module):
 
     @property
     def area(self):
-        return 2.0 * jnp.pi * self.rad * self.l  # um²
+        return 2.0 * jnp.pi * self.r * self.l  # um²
 
     def G(self, i, j):
         """
         from `https://en.wikipedia.org/wiki/Compartmental_neuron_models`.
-        `radius`: um, `Ra`: ohm cm, `l`: um, `g`: mS / cm^2
+        `rius`: um, `Ra`: ohm cm, `l`: um, `g`: mS / cm^2
         """
-        rad_i, l_i, ra_i = self.rad[i], self.l[i], self.ra[i]
-        rad_j, l_j, ra_j = self.rad[j], self.l[j], self.ra[j]
-        g_ij = rad_i * rad_j**2 / (ra_i * rad_j**2 * l_i + ra_j * rad_i**2 * l_j) / l_i
+        r_i, l_i, ra_i = self.r[i], self.l[i], self.ra[i]
+        r_j, l_j, ra_j = self.r[j], self.l[j], self.ra[j]
+        g_ij = r_i * r_j**2 / (ra_i * r_j**2 * l_i + ra_j * r_i**2 * l_j) / l_i
         return g_ij * 1e7
 
     def __call__(self, t, u, args=None):
         is_instance = lambda cls: lambda x: isinstance(x, cls)
-        # TODO: Add clamping
+        # TODO: Add clamping (for states and currents)
         # TODO: Add state sharing
         i0 = jnp.zeros(self.l.size)
 
@@ -102,12 +103,12 @@ class Module(eqx.Module):
 
         i, j = self.edges.T
         dv_ij = vmap(self.G)(i, j) * (u["v"][j] - u["v"][i])
-
         du["v"] = dv_ii + jnp.bincount(i, weights=dv_ij, length=len(dv_ii))
+
         return du
 
     def _edges_init(self):
-        edges = jnp.stack([self.parent, self.index], axis=1)
+        edges = jnp.stack([self.parents, self.index], axis=1)
         edges = edges[edges[:, 0] != -1]
         edges = jnp.concatenate([edges, edges[:, ::-1]])
         return edges
@@ -115,9 +116,6 @@ class Module(eqx.Module):
     # TODO: Add branchpoints
     # def _insert_branchpoints(self):
     #     pass
-
-    def set(self, set_dict):
-        return tree_set_with_path(self, set_dict)
 
     def init(self, t, u=None):
         is_channel = lambda x: isinstance(x, Channel)
@@ -133,31 +131,11 @@ class Module(eqx.Module):
         u0["v"] = u["v"]
         return u0
 
-    def insert(self, mech: Union[Channel, Stimulus, Clamp], at=None):
-        if self.l.size > 1:
-            at = jnp.arange(self.l.size) if at is None else at
-            mech = jax.tree.map(
-                lambda *leaves: jnp.stack(leaves)
-                if eqx.is_array(leaves[0])
-                else leaves[0],
-                *[mech] * len(at),
-            )
-            mech = eqx.tree_at(lambda x: x.index, mech, at)
+    def set(self, set_dict):
+        return tree_set_with_path(self, set_dict)
 
-        if isinstance(mech, Channel):
-            channels = self.channels.copy()
-            channels.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.channels, self, channels)
-        elif isinstance(mech, Stimulus):
-            stimuli = self.stimuli.copy()
-            stimuli.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.stimuli, self, stimuli)
-        elif isinstance(mech, Clamp):
-            clamps = self.clamps.copy()
-            clamps.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.clamps, self, clamps)
-        else:
-            raise ValueError(f"Invalid type: {type(mech)}")
+    def insert(self, mech: Union[Channel, Stimulus, Clamp]):
+        return self.at[self.index].insert(mech)
 
     # def remove(self, path: str):
     #     pass
@@ -165,88 +143,117 @@ class Module(eqx.Module):
     # def group(self, index)
     #     pass
 
-    # def at(self, index):
-    #     pass
+    @property
+    def at(self):
+        return ModuleIndexer(self)
 
-    # def __iter__(self):
-    #     pass
+    def __getitem__(self, index):
+        return self.at[index].get()
 
-    # def __getitem__(self, index):
-    #     pass
+    def pandas(self):
+        df = pd.DataFrame()
+        cols = ["id", "l", "r", "c", "ra"]
 
-    # def render_with_pandas(self):
-    #     df = pd.DataFrame()
-    #     cols = ["id", "l", "r", "c", "Ra"]
+        data = []
+        for k in cols:
+            data.append(np.array(getattr(self, k)))
 
-    #     data = []
-    #     for k in cols:
-    #         data.append(np.array(getattr(self, k)))
+        for c in self.channels.values():
+            for k in c.__annotations__.keys():
+                cols.append(c.name + "." + k)
+                col = np.full(self.l.size, np.nan)
+                col[c.index] = np.array(getattr(c, k))
+                data.append(col)
 
-    #     for c in self.channels.values():
-    #         for k in c.__annotations__.keys():
-    #             cols.append(c.name + "." + k)
-    #             col = np.full(self.l.size, np.nan)
-    #             col[c.index] = np.array(getattr(c, k))
-    #             data.append(col)
+        data = np.column_stack(data)
+        df = pd.DataFrame(
+            data, columns=cols, index=np.array(jnp.atleast_1d(self.index))
+        )
+        df["id"] = df["id"].astype(int)
+        return df
 
-    #     data = np.column_stack(data)
-    #     df = pd.DataFrame(
-    #         data, columns=cols, index=np.array(jnp.atleast_1d(self.index))
-    #     )
-    #     return df
+    def graph(self):
+        df = self.pandas()
+        G = nx.Graph()
+        G.add_edges_from(np.array(self.edges))
+        nx.set_node_attributes(G, df.to_dict(orient="index"))
+        return G
 
-    # def render_as_string(self, show_attrs: bool = True):
-    #     G = self.render_with_networkx()
-    #     D = nx.DiGraph()
-    #     D.add_edges_from(np.array(self.edges))
-    #     nx.set_node_attributes(D, G.nodes)
+    def vis(self, dims=(0, 1), **kwargs):
+        G = self.graph()
+        xyz = self.xyz[:, dims]
+        nx.draw(G, pos=xyz, **kwargs)
 
-    #     roots = sorted([n for n in D.nodes() if D.in_degree(n) == 0])
 
-    #     type_dict = {0: "undefined", 1: "soma", 2: "axon", 3: "dendrite"}
+class ModuleIndexer(eqx.Module):
+    _module: Module
+    index: Array = eqx.field(converter=jnp.array)
 
-    #     def _dfs(node, prefix="", is_last=True):
-    #         lines, attrs = [], D.nodes[node]
-    #         fmt_attr = lambda k, v: (
-    #             f"{k}={v:.1f}" if isinstance(v, (int, float)) else f"{k}={v}"
-    #         )
-    #         attrs_str = (
-    #             ", ".join(
-    #                 fmt_attr(k, v) for k, v in sorted(attrs.items()) if pd.notna(v)
-    #             )
-    #             if show_attrs
-    #             else ""
-    #         )
-    #         attrs_part = f"({attrs_str})" if attrs_str else ""
-    #         label = f"{type_dict[G.nodes[node]['id']]}[{node}]{attrs_part}"
-    #         children = sorted(D.successors(node))
-    #         is_root = node in roots
-    #         symbol = "" if is_root else ("└── " if is_last else "├── ")
-    #         lines.append(f"{prefix}{symbol}{label}{'/' if children else ''}")
-    #         for i, child in enumerate(children):
-    #             child_is_last = i == len(children) - 1
-    #             if is_root:
-    #                 next_prefix = ""
-    #             else:
-    #                 next_prefix = prefix + ("    " if is_last else "│   ")
-    #             lines.extend(_dfs(child, next_prefix, child_is_last))
-    #         return lines
+    def __init__(self, module: Module):
+        self._module = module
+        self.index = module.index
 
-    #     return "\n".join(line for r in roots for line in _dfs(r, "", r == roots[-1]))
+    def __repr__(self):
+        return f"{self._module.__class__.__name__}@{self.index}"
 
-    # def render_with_networkx(self):
-    #     df = self.render_with_pandas()
-    #     G = nx.Graph()
-    #     G.add_edges_from(np.array(self.edges))
-    #     nx.set_node_attributes(G, df.to_dict(orient="index"))
-    #     return G
+    def __getitem__(self, index: Array):
+        self_at = eqx.tree_at(lambda x: x.index, self, index)
+        return self_at
 
-    # def render(self, backend: str = "pandas"):
-    #     if backend == "pandas":
-    #         return self.render_with_pandas()
-    #     elif backend == "networkx":
-    #         return self.render_with_networkx()
-    #     elif backend == "string":
-    #         return print(self.render_as_string())
-    #     else:
-    #         raise ValueError(f"Invalid backend: {backend}")
+    def set(self, set_dict: dict):
+        m = self._module
+        self_at = self.get()
+        self_at = tree_set_with_path(self_at, set_dict)
+        # merge m and self_at together TODO: write merge util
+        # return updated_m
+
+    def insert(self, mech: Union[Channel, Stimulus, Clamp]):
+        at = jnp.atleast_1d(self.index)
+        mech = jax.tree.map(
+            lambda *leaves: jnp.stack(leaves) if eqx.is_array(leaves[0]) else leaves[0],
+            *[mech] * len(at),
+        )
+        mech = eqx.tree_at(lambda x: x.index, mech, at)
+
+        m = self._module
+        if isinstance(mech, Channel):
+            channels = m.channels.copy()
+            channels.update({mech.name: mech})
+            return eqx.tree_at(lambda x: x.channels, m, channels)
+        elif isinstance(mech, Stimulus):
+            stimuli = m.stimuli.copy()
+            stimuli.update({mech.name: mech})
+            return eqx.tree_at(lambda x: x.stimuli, m, stimuli)
+        elif isinstance(mech, Clamp):
+            clamps = m.clamps.copy()
+            clamps.update({mech.name: mech})
+            return eqx.tree_at(lambda x: x.clamps, m, clamps)
+        else:
+            raise ValueError(f"Invalid type: {type(mech)}")
+
+    def get(self):
+        # TODO: Make jit-able
+        index = jnp.atleast_1d(self.index)
+        m = self._module
+
+        # Filter compartment attributes
+        filter_comp = (
+            lambda x: x[index] if isinstance(x, Array) and x.size == m.l.size else x
+        )
+        self_at = jax.tree.map(filter_comp, m, is_leaf=lambda x: isinstance(x, Array))
+        self_at = eqx.tree_at(lambda x: x.xyz, self_at, m.xyz[index])
+
+        # Filter and remap edges
+        self_at = eqx.tree_at(lambda x: x.edges, self_at, self_at._edges_init())
+
+        # Filter mechanisms
+        is_mech = lambda x: isinstance(x, Mechanism)
+        get_mech = lambda x: x.at[index].get()
+        channels = jax.tree.map(get_mech, self_at.channels, is_leaf=is_mech)
+        stimuli = jax.tree.map(get_mech, self_at.stimuli, is_leaf=is_mech)
+        clamps = jax.tree.map(get_mech, self_at.clamps, is_leaf=is_mech)
+        self_at = eqx.tree_at(lambda x: x.channels, self_at, channels)
+        self_at = eqx.tree_at(lambda x: x.stimuli, self_at, stimuli)
+        self_at = eqx.tree_at(lambda x: x.clamps, self_at, clamps)
+
+        return self_at

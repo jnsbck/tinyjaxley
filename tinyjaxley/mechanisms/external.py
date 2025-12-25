@@ -2,20 +2,21 @@ import equinox as eqx
 from jax import Array
 import jax.numpy as jnp
 
+from .mechanism import Mechanism
 
-class Stimulus(eqx.Module):
-    name: str
-    index: Array = eqx.field(converter=jnp.array)
 
+class Stimulus(Mechanism):
     def __init__(self, name: str = None, index: Array = None):
-        self.name = self.__class__.__name__.lower() if name is None else name
-        self.index = index if index is not None else jnp.array(0)
+        name = "i" if name is None else name
+        index = jnp.array(0) if index is None else index
+        super().__init__(name, index)
 
-    def __call__(self, t, u, v):
-        return 0.0
 
-    def i(self, t, u, v):
-        return 0.0
+class Clamp(Mechanism):
+    def __init__(self, name: str = None, index: Array = None):
+        name = "v" if name is None else name
+        index = jnp.array(0) if index is None else index
+        super().__init__(name, index)
 
 
 class SquarePulse(Stimulus):
@@ -24,7 +25,7 @@ class SquarePulse(Stimulus):
     end: Array = eqx.field(converter=jnp.array)
 
     def __init__(self, value: Array, start: Array, end: Array, name: str = None):
-        super().__init__(name if name is not None else "i")
+        super().__init__(name)
         self.start = start
         self.end = end
         self.value = value
@@ -36,28 +37,13 @@ class SquarePulse(Stimulus):
         return self.value * (t >= self.start) * (t <= self.end)
 
 
-class Clamp(eqx.Module):
-    name: str
-    index: Array = eqx.field(converter=jnp.array)
-
-    def __init__(self, name: str = None, index: Array = None):
-        self.name = self.__class__.__name__.lower() if name is None else name
-        self.index = index if index is not None else jnp.array(0)
-
-    def __call__(self, t, u, v):
-        return 0.0
-
-    def i(self, t, u, v):
-        return 0.0
-
-
 class CurrentClamp(Clamp):
     value: Array = eqx.field(converter=jnp.array)
     start: Array = eqx.field(converter=jnp.array)
     end: Array = eqx.field(converter=jnp.array)
 
     def __init__(self, value: Array, start: Array, end: Array, name: str = None):
-        super().__init__(name if name is not None else "i")
+        super().__init__(name)
         self.value = value
 
     def __call__(self, t, u, v):

@@ -4,15 +4,12 @@ from ..utils import _vtrap, safe_exp
 from jax import Array
 import jax.numpy as jnp
 
+from .mechanism import Mechanism
 
-class Channel(eqx.Module):
-    name: str
-    index: Array = eqx.field(converter=jnp.array)
 
+class Channel(Mechanism):
     def __init__(self, name: str = None, index: Array = None):
-        self.name = self.__class__.__name__.lower() if name is None else name
-        self.index = index if index is not None else jnp.array(0)
-        super().__init__()
+        super().__init__(name, index)
 
     @abstractmethod
     def i(self, t, u, v):
