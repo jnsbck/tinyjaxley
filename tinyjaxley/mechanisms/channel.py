@@ -8,12 +8,14 @@ from .mechanism import Mechanism
 
 
 class Channel(Mechanism):
+    gbar: Array = None
+    e: Array = None
+
     def __init__(self, name: str = None, index: Array = None):
         super().__init__(name, index)
 
-    @abstractmethod
     def i(self, t, u, v):
-        return 0.0
+        return self.g(u) * (v - self.e)
 
     @abstractmethod
     def __call__(self, t, u, v):
@@ -25,45 +27,33 @@ class Channel(Mechanism):
     def xinf(self, u, v):
         return {}
 
+    @abstractmethod
+    def g(self, u):
+        return 0.0
+
     def init(self, t, u, v):
         return {}
 
 
-def a_m(v):
-    return 0.1 * _vtrap(-(v + 40), 10)
-
-
-def b_m(v):
-    return 4.0 * safe_exp(-(v + 65) / 18)
-
-
-def a_h(v):
-    return 0.07 * safe_exp(-(v + 65) / 20)
-
-
-def b_h(v):
-    return 1.0 / (safe_exp(-(v + 35) / 10) + 1)
-
-
-def a_n(v):
-    return 0.01 * _vtrap(-(v + 55), 10)
-
-
-def b_n(v):
-    return 0.125 * safe_exp(-(v + 65) / 80)
+a_m = lambda v: 0.1 * _vtrap(-(v + 40), 10)
+b_m = lambda v: 4.0 * safe_exp(-(v + 65) / 18)
+a_h = lambda v: 0.07 * safe_exp(-(v + 65) / 20)
+b_h = lambda v: 1.0 / (safe_exp(-(v + 35) / 10) + 1)
+a_n = lambda v: 0.01 * _vtrap(-(v + 55), 10)
+b_n = lambda v: 0.125 * safe_exp(-(v + 65) / 80)
 
 
 class Leak(Channel):
-    g: Array = eqx.field(converter=jnp.array)
+    gbar: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 0.0003, e: Array = -54.3):
+    def __init__(self, gbar: Array = 0.0003, e: Array = -54.3):
         super().__init__()
-        self.g = g
+        self.gbar = gbar
         self.e = e
 
-    def i(self, t, u, v):
-        return self.g * (v - self.e)
+    def g(self, u):
+        return self.gbar
 
     def __call__(self, t, u, v):
         return {}
@@ -73,18 +63,18 @@ class Leak(Channel):
 
 
 class Na(Channel):
-    g: Array = eqx.field(converter=jnp.array)
+    gbar: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 0.12, e: Array = 50.0):
+    def __init__(self, gbar: Array = 0.12, e: Array = 50.0):
         super().__init__()
-        self.g = g
+        self.gbar = gbar
         self.e = e
 
-    def i(self, t, u, v):
+    def g(self, u):
         m = u["m"]
         h = u["h"]
-        return self.g * m**3 * h * (v - self.e)
+        return self.gbar * m**3 * h
 
     def tau(self, u, v):
         tau_m = 1 / (a_m(v) + b_m(v))
@@ -112,17 +102,17 @@ class Na(Channel):
 
 
 class K(Channel):
-    g: Array = eqx.field(converter=jnp.array)
+    gbar: Array = eqx.field(converter=jnp.array)
     e: Array = eqx.field(converter=jnp.array)
 
-    def __init__(self, g: Array = 0.036, e: Array = -77.0):
+    def __init__(self, gbar: Array = 0.036, e: Array = -77.0):
         super().__init__()
-        self.g = g
+        self.gbar = gbar
         self.e = e
 
-    def i(self, t, u, v):
+    def g(self, u):
         n = u["n"]
-        return self.g * n**4 * (v - self.e)
+        return self.gbar * n**4
 
     def tau(self, u, v):
         tau_n = 1 / (a_n(v) + b_n(v))

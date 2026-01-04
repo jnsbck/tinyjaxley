@@ -52,3 +52,10 @@ def tree_set_with_path(model, set_dict):
     return tree_apply_with_path(
         model, {k: (lambda v: lambda _: v)(v) for k, v in set_dict.items()}
     )
+
+
+def stack_leaves(*lvs, if_not_stackable=lambda x: x[0]):
+    return jnp.hstack(lvs) if eqx.is_array(lvs[0]) else if_not_stackable(*lvs)
+
+
+is_instance_of = lambda cls: lambda x: isinstance(x, cls)

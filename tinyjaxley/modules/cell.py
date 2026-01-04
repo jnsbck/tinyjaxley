@@ -4,24 +4,24 @@ import jax.numpy as jnp
 import equinox as eqx
 
 from jax import Array
+from ..utils import stack_leaves
 
 
 class Cell(Module):
     def __init__(self, branches: list[Branch], parents: Array):
-        stack_leaves = (
-            lambda *lvs: jnp.concatenate(lvs) if eqx.is_array(lvs[0]) else lvs[0]
-        )
         comp_parents = self._combine_parents(branches, parents)
 
         comps = jax.tree.map(stack_leaves, *branches)
-        comps = eqx.tree_at(lambda x: x.index, comps, jnp.arange(comps.l.size))
+        comps = eqx.tree_at(lambda x: x.index, comps, jnp.arange(comps.num_comps))
         comps = eqx.tree_at(lambda x: x.parents, comps, comp_parents)
         super().__init__(
             l=comps.l,
             r=comps.r,
             c=comps.c,
             ra=comps.ra,
-            xyz=comps.xyz,
+            x=comps.x,
+            y=comps.y,
+            z=comps.z,
             parents=comps.parents,
             index=comps.index,
             id=comps.id,
