@@ -5,10 +5,10 @@ import diffrax
 import jax
 import jax.numpy as jnp
 from jax import vmap
-from tinyjaxley.mechanisms.channel import Channel
-from tinyjaxley.mechanisms.external import Stimulus
-from tinyjaxley.solve import exp_euler
-from tinyjaxley.utils import is_instance_of
+from .mechanisms.channel import Channel
+from .mechanisms.external import Stimulus
+from .solve import exp_euler
+from .utils import is_instance_of
 import jax.experimental.sparse as jsp
 
 
@@ -136,13 +136,9 @@ class BackwardEuler(diffrax.AbstractSolver):
         y1 = jax.tree.map(step_channel, hh.channels, is_leaf=is_instance_of(Channel))
         return y1
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def _step_voltage(self, terms, t0, t1, y0, y1):
         hh = terms.term.vector_field
-
         dt = t1 - t0
-
-        # step gates
-        y1 = self._step_gates(terms, t0, t1, y0)
 
         def split_linear_terms(acc, c):
             lin, const = acc
@@ -158,7 +154,6 @@ class BackwardEuler(diffrax.AbstractSolver):
         lin *= 1e3 / hh.c
         const *= 1e3 / hh.c
 
-        # Compute ONLY external stimulus currents
         def sum_i_ext(i0, stim):
             i = stim.i(t0, y0, y0["v"][stim.index])
             return i0.at[stim.index].add(i)
@@ -169,7 +164,7 @@ class BackwardEuler(diffrax.AbstractSolver):
             jnp.zeros(hh.num_comps),
             is_leaf=is_instance_of(Stimulus),
         )
-        i_ext_total = i_ext * 1e5 / hh.area / hh.c  # Divide by capacitance
+        i_ext_total = i_ext * 1e5 / hh.area / hh.c
 
         i, j = hh.edges.T
         g_ij = vmap(hh.g_coupling)(i, j)
@@ -190,7 +185,15 @@ class BackwardEuler(diffrax.AbstractSolver):
         rhs = y0["v"] - dt * const - dt * i_ext_total
 
         # Solve: (1 - dt*L - dt*G) @ v_{t+1} = v_t - dt*C - dt*i_ext/C
-        y1["v"] = jsp.linalg.spsolve(*lhs, rhs, tol=1e-6)
+        v1 = jsp.linalg.spsolve(*lhs, rhs, tol=1e-6)
+        return v1
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        # step gates
+        y1 = self._step_gates(terms, t0, t1, y0)
+
+        # step voltage
+        y1["v"] = self._step_voltage(terms, t0, t1, y0, y1)
 
         # no error estimate
         y_error = None
