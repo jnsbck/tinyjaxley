@@ -228,3 +228,72 @@ class BackwardEuler(diffrax.AbstractSolver):
     def func(self, terms, t0, y0, args):
         """Return the vector field (for use in other contexts)."""
         return terms.vf(t0, y0, args)
+
+
+class AdaptiveBackwardEuler(diffrax.AbstractAdaptiveSolver):
+    """Backward Euler with embedded error estimation for adaptive timestepping."""
+
+    term_structure = diffrax.ODETerm
+    interpolation_cls = diffrax.LocalLinearInterpolation
+    gate_solver: GateExpEuler = GateExpEuler()
+    voltage_solver: VoltageBackwardEuler = VoltageBackwardEuler()
+
+    def order(self, terms):
+        return 1
+
+    def error_order(self, terms):
+        return 2
+
+    def init(self, terms, t0, t1, y0, args):
+        return None
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        dt = t1 - t0
+
+        # Full step with backward Euler
+        y1_gates, *_ = self.gate_solver.step(terms, t0, t1, y0, args, None, made_jump)
+        v0 = y0["v"]
+        v1, *_ = self.voltage_solver.step(
+            terms, t0, t1, v0, (y0, y1_gates), None, made_jump
+        )
+        y1_gates["v"] = v1
+
+        # Half-step approximation for error estimation
+        t_mid = t0 + dt / 2.0
+
+        # First half-step
+        y_mid_gates, *_ = self.gate_solver.step(
+            terms, t0, t_mid, y0, args, None, made_jump
+        )
+        v_mid, *_ = self.voltage_solver.step(
+            terms, t0, t_mid, v0, (y0, y_mid_gates), None, made_jump
+        )
+        y_mid_gates["v"] = v_mid
+
+        # Second half-step
+        y1_half_gates, *_ = self.gate_solver.step(
+            terms, t_mid, t1, y_mid_gates, args, None, made_jump
+        )
+        v1_half, *_ = self.voltage_solver.step(
+            terms, t_mid, t1, v_mid, (y_mid_gates, y1_half_gates), None, made_jump
+        )
+        y1_half_gates["v"] = v1_half
+
+        # Error estimate: difference between full step and two half-steps
+        # For backward Euler with embedded half-stepping, error scales as O(dt^2)
+        def compute_error(leaf1, leaf_half):
+            return jnp.abs(leaf1 - leaf_half)
+
+        y_error = jax.tree.map(compute_error, y1_gates, y1_half_gates)
+
+        # Use the more accurate half-step solution
+        y1 = y1_half_gates
+
+        # Dense info for interpolation
+        dense_info = dict(y0=y0, y1=y1)
+
+        return y1, y_error, dense_info, None, diffrax.RESULTS.successful
+
+    def func(self, terms, t0, y0, args):
+        """Return the vector field."""
+        return terms.vf(t0, y0, args)
