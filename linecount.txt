@@ -2,14 +2,19 @@
 File                           Lines
 ----------------------------------------
 __init__.py                    0
-mechanisms/channel.py          145
-mechanisms/external.py         83
+io/__init__.py                 0
+mechanisms/channel.py          99
+mechanisms/external.py         49
 mechanisms/__init__.py         0
-modules/base.py                255
-modules/__init__.py            0
-optimize.py                    89
-solvers.py                     0
-utils.py                       52
+mechanisms/mechanism.py        40
+modules/base.py                220
+modules/branch.py              22
+modules/cell.py                35
+modules/comp.py                37
+modules/__init__.py            4
+optimize.py                    70
+solve.py                       157
+utils.py                       37
 ----------------------------------------
-Total:                         624
+Total:                         770
 

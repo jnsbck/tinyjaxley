@@ -10,6 +10,8 @@ Simulation
 - [x] working comps (single compartments)
 - [x] working branches (cable)
 - [x] working cells (branched morphologies)
+- [x] Custom BackwardEuler Solver
+    - [ ] set, get, insert API
     - [ ] add recording API
     - [ ] add state sharing?
     - [ ] add branchpoints (comp with l=0)
@@ -19,7 +21,7 @@ Simulation
     - [ ] NEURON backend
     - [ ] custom backend
     - [ ] non-cylindrical comps (res_loads, area)
-- [ ] working networks (synapses)
+- [ ] networks (synapses)
 
 Optimization
 - [ ] gradients / optimization

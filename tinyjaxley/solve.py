@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from jax import vmap
 from .mechanisms.channel import Channel
 from .mechanisms.external import Stimulus
-from .solve import exp_euler
 from .utils import is_instance_of
 import jax.experimental.sparse as jsp
 
@@ -56,7 +55,7 @@ def bcoo_to_csr(rows, cols, data, n):
     return sorted_data, sorted_cols, indptr
 
 
-class ForwardEuler(diffrax.AbstractSolver):
+class GateExpEuler(diffrax.AbstractSolver):
     term_structure = diffrax.ODETerm
     interpolation_cls = diffrax.LocalLinearInterpolation
 
@@ -66,8 +65,8 @@ class ForwardEuler(diffrax.AbstractSolver):
     def init(self, terms, t0, t1, y0, args):
         return None
 
-    def _step_gates(self, terms, t0, t1, y0):
-        hh = terms.term.vector_field
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        channels = terms.term.vector_field.channels
         dt = t1 - t0
 
         def step_channel(c):
@@ -76,17 +75,99 @@ class ForwardEuler(diffrax.AbstractSolver):
             step_exp_euler = lambda x, xinf, tau: exp_euler(x, dt, xinf, tau)
             return jax.tree.map(step_exp_euler, y0.get(c.name, {}), xinf, tau)
 
-        y1 = jax.tree.map(step_channel, hh.channels, is_leaf=is_instance_of(Channel))
-        return y1
+        y1 = jax.tree.map(step_channel, channels, is_leaf=is_instance_of(Channel))
+        return y1, None, dict(y0=y0, y1=y1), None, diffrax.RESULTS.successful
+
+    def func(self, terms, t0, y0, args):
+        channels = terms.term.vector_field.channels
+        channel_vf = lambda c: c(t0, y0.get(c.name, {}), y0["v"][c.index])
+        return jax.tree.map(channel_vf, channels, is_leaf=is_instance_of(Channel))
+
+
+class VoltageBackwardEuler(diffrax.AbstractSolver):
+    term_structure = diffrax.ODETerm
+    interpolation_cls = diffrax.LocalLinearInterpolation
+
+    def order(self, terms):
+        return 1
+
+    def init(self, terms, t0, t1, y0, args):
+        return None
 
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         hh = terms.term.vector_field
+        dt = t1 - t0
+        y0_channels, y1_channels = args
 
+        def split_linear_terms(acc, c):
+            lin, const = acc
+            conds = c.g(y1_channels[c.name])
+            return (lin.at[c.index].add(-conds), const.at[c.index].add(conds * c.e))
+
+        lin, const = jax.tree.reduce(
+            split_linear_terms,
+            hh.channels,
+            (jnp.zeros(hh.num_comps), jnp.zeros(hh.num_comps)),
+            is_leaf=is_instance_of(Channel),
+        )
+        lin *= 1e3 / hh.c
+        const *= 1e3 / hh.c
+
+        def sum_i_ext(i0, stim):
+            i = stim.i(t0, y0_channels, y0[stim.index])
+            return i0.at[stim.index].add(i)
+
+        i_ext = jax.tree.reduce(
+            sum_i_ext,
+            hh.stimuli,
+            jnp.zeros(hh.num_comps),
+            is_leaf=is_instance_of(Stimulus),
+        )
+        i_ext_total = i_ext * 1e5 / hh.area / hh.c
+
+        i, j = hh.edges.T
+        g_ij = vmap(hh.g_coupling)(i, j)
+        inds_diag = jnp.arange(hh.num_comps)[:, None].repeat(2, axis=1)
+
+        # Diagonal: negative sum of all conductances (edges contain both directions)
+        g_ii = -jnp.bincount(i, weights=g_ij, length=hh.num_comps)
+
+        # Build the matrix: (1 - dt*L - dt*G)
+        A_ii = jnp.ones(hh.num_comps) - dt * lin - dt * g_ii
+        A_ij = -dt * g_ij
+
+        A = jnp.concatenate([A_ii, A_ij])
+        inds = jnp.concatenate([inds_diag, hh.edges])
+        lhs = bcoo_to_csr(*inds.T, A, hh.num_comps)
+
+        # Right-hand side
+        rhs = y0 + dt * const + dt * i_ext_total
+
+        # Solve: (1 - dt*L - dt*G) @ v_{t+1} = v_t - dt*C - dt*i_ext/C
+        y1 = jsp.linalg.spsolve(*lhs, rhs, tol=1e-6)
+        return y1, None, dict(y0=y0, y1=y1), None, diffrax.RESULTS.successful
+
+    def func(self, terms, t0, y0, args):
+        return terms.vf(t0, y0, args)["v"]
+
+
+class ForwardEuler(diffrax.AbstractSolver):
+    term_structure = diffrax.ODETerm
+    interpolation_cls = diffrax.LocalLinearInterpolation
+    gate_solver: GateExpEuler = GateExpEuler()
+
+    def order(self, terms):
+        return 1
+
+    def init(self, terms, t0, t1, y0, args):
+        return None
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        hh = terms.term.vector_field
         dt = t1 - t0
 
-        # Forward Euler: y1 = y0 + dt * dy0
         # step gates
-        y1 = self._step_gates(terms, t0, t1, y0)
+        y1, *_ = self.gate_solver.step(terms, t0, t1, y0, args, None, made_jump)
 
         # compute currents
         i_total = hh.compute_i_total(t0, y0, y0["v"])
@@ -116,6 +197,8 @@ class ForwardEuler(diffrax.AbstractSolver):
 class BackwardEuler(diffrax.AbstractSolver):
     term_structure = diffrax.ODETerm
     interpolation_cls = diffrax.LocalLinearInterpolation
+    gate_solver: GateExpEuler = GateExpEuler()
+    voltage_solver: VoltageBackwardEuler = VoltageBackwardEuler()
 
     def order(self, terms):
         return 1
@@ -123,77 +206,14 @@ class BackwardEuler(diffrax.AbstractSolver):
     def init(self, terms, t0, t1, y0, args):
         return None
 
-    def _step_gates(self, terms, t0, t1, y0):
-        hh = terms.term.vector_field
-        dt = t1 - t0
-
-        def step_channel(c):
-            xinf = c.xinf(y0.get(c.name, {}), y0["v"][c.index])
-            tau = c.tau(y0.get(c.name, {}), y0["v"][c.index])
-            step_exp_euler = lambda x, xinf, tau: exp_euler(x, dt, xinf, tau)
-            return jax.tree.map(step_exp_euler, y0.get(c.name, {}), xinf, tau)
-
-        y1 = jax.tree.map(step_channel, hh.channels, is_leaf=is_instance_of(Channel))
-        return y1
-
-    def _step_voltage(self, terms, t0, t1, y0, y1):
-        hh = terms.term.vector_field
-        dt = t1 - t0
-
-        def split_linear_terms(acc, c):
-            lin, const = acc
-            conds = c.g(y1[c.name])
-            return (lin.at[c.index].add(-conds), const.at[c.index].add(conds * c.e))
-
-        lin, const = jax.tree.reduce(
-            split_linear_terms,
-            hh.channels,
-            (jnp.zeros(hh.num_comps), jnp.zeros(hh.num_comps)),
-            is_leaf=is_instance_of(Channel),
-        )
-        lin *= 1e3 / hh.c
-        const *= 1e3 / hh.c
-
-        def sum_i_ext(i0, stim):
-            i = stim.i(t0, y0, y0["v"][stim.index])
-            return i0.at[stim.index].add(i)
-
-        i_ext = jax.tree.reduce(
-            sum_i_ext,
-            hh.stimuli,
-            jnp.zeros(hh.num_comps),
-            is_leaf=is_instance_of(Stimulus),
-        )
-        i_ext_total = i_ext * 1e5 / hh.area / hh.c
-
-        i, j = hh.edges.T
-        g_ij = vmap(hh.g_coupling)(i, j)
-        inds_diag = jnp.arange(hh.num_comps)[:, None].repeat(2, axis=1)
-
-        # Diagonal: negative sum of all conductances (edges contain both directions)
-        g_ii = -jnp.bincount(i, weights=g_ij, length=hh.num_comps)
-
-        # Build the matrix: (1 - dt*L - dt*G)
-        A_ii = jnp.ones(hh.num_comps) - dt * lin - dt * g_ii
-        A_ij = -dt * g_ij
-
-        A = jnp.concatenate([A_ii, A_ij])
-        inds = jnp.concatenate([inds_diag, hh.edges])
-        lhs = bcoo_to_csr(*inds.T, A, hh.num_comps)
-
-        # Right-hand side
-        rhs = y0["v"] - dt * const - dt * i_ext_total
-
-        # Solve: (1 - dt*L - dt*G) @ v_{t+1} = v_t - dt*C - dt*i_ext/C
-        v1 = jsp.linalg.spsolve(*lhs, rhs, tol=1e-6)
-        return v1
-
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         # step gates
-        y1 = self._step_gates(terms, t0, t1, y0)
+        y1, *_ = self.gate_solver.step(terms, t0, t1, y0, args, None, made_jump)
 
         # step voltage
-        y1["v"] = self._step_voltage(terms, t0, t1, y0, y1)
+        v0 = y0["v"]
+        v1, *_ = self.voltage_solver.step(terms, t0, t1, v0, (y0, y1), None, made_jump)
+        y1["v"] = v1
 
         # no error estimate
         y_error = None

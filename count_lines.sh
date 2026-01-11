@@ -1,6 +1,6 @@
 #!/bin/bash
 
-IGNORE_COMMENTS=${IGNORE_COMMENTS:-False}
+IGNORE_EMPTY=${IGNORE_EMPTY:-True}
 
 printf "\n%-30s %s\n" "File" "Lines"
 printf "%.0s-" {1..40}
@@ -8,7 +8,7 @@ printf "\n"
 
 total=0
 while IFS= read -r file; do
-    if [[ "${IGNORE_COMMENTS,,}" == "true" ]] || [[ "${IGNORE_COMMENTS,,}" == "1" ]]; then
+    if [[ "${IGNORE_EMPTY,,}" == "true" ]] || [[ "${IGNORE_EMPTY,,}" == "1" ]]; then
         lines=$(grep -v '^\s*#' "$file" | grep -v '^\s*$' | wc -l)
     else
         lines=$(wc -l < "$file")
