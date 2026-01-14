@@ -3,6 +3,9 @@ from jax import Array
 import jax.numpy as jnp
 import jax
 
+from operator import attrgetter
+from typing import Optional
+
 
 class Mechanism(eqx.Module):
     name: str
@@ -31,7 +34,7 @@ class MechanismIndexer(eqx.Module):
 
     def __init__(self, mechanism: Mechanism):
         self._mechanism = mechanism
-        self.index = mechanism.index
+        self.index = jnp.array([])
 
     def __repr__(self):
         return f"{self._mechanism.__class__.__name__}@{self.index}"
@@ -40,18 +43,16 @@ class MechanismIndexer(eqx.Module):
         self_at = eqx.tree_at(lambda x: x.index, self, index)
         return self_at
 
-    def set(self, set_dict: dict):
-        pass
+    def set(self, path_str: str, value: Array):
+        # TODO: should attrgetter be replaced by tree_at_path?
+        getter = attrgetter(path_str.lstrip("."))
+        replace_fn = lambda x: x.at[self.index].set(value)
+        return eqx.tree_at(getter, self._mechanism, replace_fn=replace_fn)
 
-    def get(self):
-        mech_idx = jnp.atleast_1d(self._mechanism.index)
-        index = jnp.atleast_1d(self.index)
-        pos_mask = jnp.isin(mech_idx, index)
-        local_index = jnp.where(pos_mask)[0]
-
-        def filter_param(x):
-            if isinstance(x, Array):
-                return x[local_index]
-            return x
-
-        return jax.tree.map(filter_param, self._mechanism)
+    def get(self, path_str: Optional[str] = None):
+        if path_str is not None:
+            getter = attrgetter(path_str.lstrip("."))
+            return getter(self._mechanism).at[self.index].get()
+        return jax.tree.map(
+            lambda x: x.at[self.index].get() if eqx.is_array(x) else x, self._mechanism
+        )

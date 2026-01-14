@@ -1,3 +1,4 @@
+from re import M
 import equinox as eqx
 from jax import Array
 import jax.numpy as jnp
@@ -10,10 +11,11 @@ from typing import List, Union
 from ..mechanisms.mechanism import Mechanism
 from ..mechanisms.channel import Channel
 from ..mechanisms.external import Stimulus, Clamp
-from ..utils import tree_set_with_path, is_instance_of
+from ..utils import is_instance_of, tree_getter, stack_leaves
 from jax import vmap
 
 from typing import Optional
+from operator import attrgetter
 
 
 class Module(eqx.Module):
@@ -165,8 +167,8 @@ class Module(eqx.Module):
         u0["v"] = u["v"]
         return u0
 
-    def set(self, set_dict):
-        return tree_set_with_path(self, set_dict)
+    def set(self, path_str: str, value: Array):
+        return self.at[self.index].set(path_str, value)
 
     def insert(self, mech: Union[Channel, Stimulus, Clamp]):
         return self.at[self.index].insert(mech)
@@ -225,7 +227,7 @@ class ModuleIndexer(eqx.Module):
 
     def __init__(self, module: Module):
         self._module = module
-        self.index = module.index
+        self.index = jnp.array([])
 
     def __repr__(self):
         return f"{self._module.__class__.__name__}@{self.index}"
@@ -234,59 +236,76 @@ class ModuleIndexer(eqx.Module):
         self_at = eqx.tree_at(lambda x: x.index, self, index)
         return self_at
 
-    def set(self, set_dict: dict):
-        m = self._module
-        self_at = self.get()
-        self_at = tree_set_with_path(self_at, set_dict)
-        # merge m and self_at together TODO: write merge util
-        # return updated_m
+    def _get_mech_index(self, path_str: str):
+        getter = tree_getter(path_str)
+        mech_idx = getter(self._module).index
+        return jnp.intersect1d(mech_idx, self.index, return_indices=True)[1]
+
+    def set(self, path_str: str, value: Array):
+        path_str = path_str.lstrip(".")
+
+        if path_str.startswith(("channels", "stimuli", "clamps")):
+            mech_path, mech_attr_path = path_str.split(".", 1)
+            mech_getter = tree_getter(mech_path)
+            index = self._get_mech_index(mech_path)
+            mech = mech_getter(self._module).at[index].set(mech_attr_path, value)
+            return eqx.tree_at(mech_getter, self._module, mech)
+
+        getter = tree_getter(path_str)
+        replace_fn = lambda x: x.at[self.index].set(value)
+        return eqx.tree_at(getter, self._module, replace_fn=replace_fn)
+
+    def _get_mechs(self):
+        def get_mechs(x):
+            if isinstance(x, Mechanism):
+                at = jnp.intersect1d(x.index, self.index, return_indices=True)[1]
+                get_at = lambda x: x.at[at].get() if eqx.is_array(x) else x
+                return jax.tree.map(get_at, x)
+            return x.at[self.index].get()
+
+        is_mech = lambda x: isinstance(x, Mechanism)
+        return jax.tree.map(get_mechs, self._module, is_leaf=is_mech)
+
+    def get(self, path_str: Optional[str] = None):
+        if path_str is None:
+            self_at = self._get_mechs()
+            self_at = eqx.tree_at(lambda x: x.edges, self_at, self_at._edges_init())
+            return self_at
+
+        path_str = path_str.lstrip(".")
+        if path_str.startswith(("channels", "stimuli", "clamps")):
+            mech_path, mech_attr_path = path_str.split(".", 1)
+            mech_getter = tree_getter(mech_path)
+            index = self._get_mech_index(mech_path)
+            return mech_getter(self._module).at[index].get(mech_attr_path)
+
+        getter = tree_getter(path_str)
+        replace_fn = lambda x: x.at[self.index].get()
+        return eqx.tree_at(getter, self._module, replace_fn=replace_fn)
 
     def insert(self, mech: Union[Channel, Stimulus, Clamp]):
-        at = jnp.atleast_1d(self.index)
-        mech = jax.tree.map(
-            lambda *leaves: jnp.stack(leaves) if eqx.is_array(leaves[0]) else leaves[0],
-            *[mech] * len(at),
-        )
-        mech = eqx.tree_at(lambda x: x.index, mech, at)
+        path_str = "channels" if isinstance(mech, Channel) else None
+        path_str = "stimuli" if isinstance(mech, Stimulus) else path_str
+        path_str = "clamps" if isinstance(mech, Clamp) else path_str
 
-        m = self._module
-        if isinstance(mech, Channel):
-            channels = m.channels.copy()
-            channels.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.channels, m, channels)
-        elif isinstance(mech, Stimulus):
-            stimuli = m.stimuli.copy()
-            stimuli.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.stimuli, m, stimuli)
-        elif isinstance(mech, Clamp):
-            clamps = m.clamps.copy()
-            clamps.update({mech.name: mech})
-            return eqx.tree_at(lambda x: x.clamps, m, clamps)
+        getter = attrgetter(path_str)
+        existing_mechs = getter(self._module)
+        at = self.index
+
+        if self._module.index.ndim == 0:
+            new_mech = mech
+        elif mech.name in existing_mechs:
+            old_mech = existing_mechs[mech.name]
+            comb_inds = jnp.union1d(old_mech.index, at)
+            new_mech = jax.tree.map(stack_leaves, *[mech] * comb_inds.size)
+            new_mech = eqx.tree_at(lambda x: x.index, new_mech, comb_inds)
+
+            where = jnp.intersect1d(old_mech.index, comb_inds, return_indices=True)[1]
+            set_fn = lambda x, y: x.at[where].set(y) if eqx.is_array(x) else x
+            new_mech = jax.tree.map(set_fn, new_mech, old_mech)
         else:
-            raise ValueError(f"Invalid type: {type(mech)}")
+            new_mech = jax.tree.map(stack_leaves, *[mech] * at.size)
+            new_mech = eqx.tree_at(lambda x: x.index, new_mech, at)
 
-    def get(self):
-        # TODO: Make jit-able
-        index = jnp.atleast_1d(self.index)
-        m = self._module
-
-        # Filter compartment attributes
-        filter_comp = (
-            lambda x: x[index] if isinstance(x, Array) and x.size == m.num_comps else x
-        )
-        self_at = jax.tree.map(filter_comp, m, is_leaf=lambda x: isinstance(x, Array))
-
-        # Filter and remap edges
-        self_at = eqx.tree_at(lambda x: x.edges, self_at, self_at._edges_init())
-
-        # Filter mechanisms
-        is_mech = lambda x: isinstance(x, Mechanism)
-        get_mech = lambda x: x.at[index].get()
-        channels = jax.tree.map(get_mech, self_at.channels, is_leaf=is_mech)
-        stimuli = jax.tree.map(get_mech, self_at.stimuli, is_leaf=is_mech)
-        clamps = jax.tree.map(get_mech, self_at.clamps, is_leaf=is_mech)
-        self_at = eqx.tree_at(lambda x: x.channels, self_at, channels)
-        self_at = eqx.tree_at(lambda x: x.stimuli, self_at, stimuli)
-        self_at = eqx.tree_at(lambda x: x.clamps, self_at, clamps)
-
-        return self_at
+        all_mechs = {**existing_mechs, mech.name: new_mech}
+        return eqx.tree_at(getter, self._module, all_mechs)

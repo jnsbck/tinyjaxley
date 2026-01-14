@@ -10,13 +10,15 @@ Simulation
 - [x] working comps (single compartments)
 - [x] working branches (cable)
 - [x] working cells (branched morphologies)
-- [x] Custom BackwardEuler Solver
-    - [ ] set, get, insert API
-    - [ ] add recording API
+    - [ ] rm parents in fav of only edges
+    - [x] set, get, insert API
     - [ ] add state sharing?
     - [ ] add branchpoints (comp with l=0)
-    - [ ] rm parents in fav of only edges
+- [x] Custom BackwardEuler Solver
+    - [x] adaptive timestepping
+    - [ ] integrate convenience function
 - [ ] Add clamping (set) and stimuli (add) for states and currents
+- [ ] add recording API
 - [ ] swc reader
     - [ ] NEURON backend
     - [ ] custom backend
@@ -26,10 +28,10 @@ Simulation
 Optimization
 - [ ] gradients / optimization
     - [ ] add `filter_trainables` (for `eqx.partition`)
-    - [ ] add custom optimizer
     - [ ] add selecting trainables API
     - [ ] add parameter sharing
-    - [ ] ddd transforms
+    - [ ] add transforms
+    - [ ] add custom optimizer
 - [ ] make it fast! (compile and runtime!) (add regression tests)
 
 Infrastructure
@@ -38,5 +40,5 @@ Infrastructure
 - [ ] add docs
 
 API sugar and BONUS
-- [ ] support more flexible indexing, manipulation and viewing
+- [x] support more flexible indexing, manipulation and viewing
 - [ ] jaxley/.nmodl channel transpiler
