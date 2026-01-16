@@ -10,13 +10,14 @@ Simulation
 - [x] working comps (single compartments)
 - [x] working branches (cable)
 - [x] working cells (branched morphologies)
-    - [ ] rm parents in fav of only edges
+    - [ ] rm parents in fav of only edges?
     - [x] set, get, insert API
     - [ ] add state sharing?
     - [ ] add branchpoints (comp with l=0)
 - [x] Custom BackwardEuler Solver
     - [x] adaptive timestepping
     - [ ] integrate convenience function
+    - [ ] make it fast!(compare against simple baseline)
 - [ ] Add clamping (set) and stimuli (add) for states and currents
 - [ ] add recording API
 - [ ] swc reader
@@ -28,8 +29,8 @@ Simulation
 Optimization
 - [ ] gradients / optimization
     - [ ] add `filter_trainables` (for `eqx.partition`)
-    - [ ] add selecting trainables API
-    - [ ] add parameter sharing
+    - [-] add selecting trainables API
+    - [-] add parameter sharing
     - [ ] add transforms
     - [ ] add custom optimizer
 - [ ] make it fast! (compile and runtime!) (add regression tests)
