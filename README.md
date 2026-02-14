@@ -6,6 +6,10 @@ The current linecount is:
 [linecount.txt]
 
 ## todos:
+General
+- [ ] Decide on and freeze API
+- [ ] Add license
+
 Simulation
 - [x] working comps (single compartments)
 - [x] working branches (cable)
@@ -25,6 +29,7 @@ Simulation
     - [ ] custom backend
     - [ ] non-cylindrical comps (res_loads, area)
 - [ ] networks (synapses)
+    - [ ] connect (allow to fuse 2 different cells into a network)
 
 Optimization
 - [ ] gradients / optimization
@@ -41,5 +46,7 @@ Infrastructure
 - [ ] add docs
 
 API sugar and BONUS
-- [x] support more flexible indexing, manipulation and viewing
+- [x] `.select` and `.share`
 - [ ] jaxley/.nmodl channel transpiler
+- [ ] Tutorials and Docs
+- [ ] morphology modification (`split` and `fuse`)
