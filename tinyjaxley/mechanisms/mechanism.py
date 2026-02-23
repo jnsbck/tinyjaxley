@@ -10,16 +10,39 @@ from typing import Optional
 class Mechanism(eqx.Module):
     name: str
     index: Array = eqx.field(converter=jnp.array)
+    reads: tuple[str] = eqx.field(converter=tuple)
+    writes: tuple[str] = eqx.field(converter=tuple)
+    _is_density: bool = eqx.field(default=False)
 
     def __init__(self, name: str = None, index: Array = None):
         self.name = self.__class__.__name__.lower() if name is None else name
         self.index = index if index is not None else jnp.array(0)
 
-    def __call__(self, t, u, v):
+    def i(self, t, u, args=None):
         return 0.0
 
-    def i(self, t, u, v):
-        return 0.0
+    def init(self, t, u, args=None):
+        return ()
+
+    def _is_global(self, v):
+        # any state that is in more than 1 mechs -> global
+        return True if len(v) > len(self.index) else False
+    
+    def read(self, u):
+        u_local = jnp.zeros((len(self.index), len(self.reads)))
+        for i, k in enumerate(self.reads):
+            u_k = u[k]
+            u_k_at = u_k[self.index] if self._is_global(u_k) else u_k
+            u_local = u_local.at[self.index, i].set(u_k_at)
+        return u_local
+
+    def write(self, u, u_local):
+        _u = u.copy()
+        for i, k in enumerate(self.writes):
+            u_k = u[k]
+            u_k_at = u_k.at[self.index] if self._is_global(u_k) else u_k.at[:]
+            _u[k] = u_k_at.set(u_local[i])
+        return _u
 
     @property
     def at(self):

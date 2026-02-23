@@ -8,31 +8,33 @@ from .mechanism import Mechanism
 
 
 class Channel(Mechanism):
-    gbar: Array = None
-    e: Array = None
+    reads: tuple[str] = ("v",) # NOTE: Allow reads from currents?
+    writes: tuple[str] = () # NOTE: Allow writes to currents?
+    gbar: Array = eqx.field(converter=jnp.array)
+    e: Array = eqx.field(converter=jnp.array)
+    ion: str = eqx.field(converter=str)
 
     def __init__(self, name: str = None, index: Array = None):
         super().__init__(name, index)
 
-    def i(self, t, u, v):
-        return self.g(u) * (v - self.e)
+    def g(self, t, u, args=None):
+        return 1.0
+    
+    def i(self, t, u, args=None):
+        v = u[0]
+        return self.g(t, u, args) * (v - self.e)
 
-    @abstractmethod
-    def __call__(self, t, u, v):
-        return u
+    def vf(self, t, u, args=None):
+        return ()
 
-    def tau(self, u, v):
-        return {}
+    def tau(self, t, u, args=None):
+        return ()
 
-    def xinf(self, u, v):
-        return {}
+    def ss(self, t, u, args=None):
+        return ()
 
-    @abstractmethod
-    def g(self, u):
-        return 0.0
-
-    def init(self, t, u, v):
-        return {}
+    def init(self, t, u, args=None):
+        return ()
 
 
 a_m = lambda v: 0.1 * _vtrap(-(v + 40), 10)
@@ -42,93 +44,105 @@ b_h = lambda v: 1.0 / (safe_exp(-(v + 35) / 10) + 1)
 a_n = lambda v: 0.01 * _vtrap(-(v + 55), 10)
 b_n = lambda v: 0.125 * safe_exp(-(v + 65) / 80)
 
-
-class Leak(Channel):
-    gbar: Array = eqx.field(converter=jnp.array)
-    e: Array = eqx.field(converter=jnp.array)
-
-    def __init__(self, gbar: Array = 0.0003, e: Array = -54.3):
-        super().__init__()
-        self.gbar = gbar
-        self.e = e
-
-    def g(self, u):
-        return self.gbar
-
-    def __call__(self, t, u, v):
-        return {}
-
-    def init(self, t, u, v):
-        return {}
-
-
 class Na(Channel):
-    gbar: Array = eqx.field(converter=jnp.array)
-    e: Array = eqx.field(converter=jnp.array)
-
-    def __init__(self, gbar: Array = 0.12, e: Array = 50.0):
-        super().__init__()
+    reads = ("v", "m", "h")
+    writes = ("m", "h")
+    ion: str = "na"
+    
+    def __init__(self, gbar: Array = 120.0, e: Array = 50.0, name: str = None, index: Array = None):
+        super().__init__(name, index)
         self.gbar = gbar
         self.e = e
 
-    def g(self, u):
-        m = u["m"]
-        h = u["h"]
+    def vf(self, t, u, args=None):
+        v, m, h = u
+        dm = a_m(v) * (1 - m) - b_m(v) * m
+        dh = a_h(v) * (1 - h) - b_h(v) * h
+        return dm, dh
+
+    def g(self, t, u, args=None):
+        v, m, h = u
         return self.gbar * m**3 * h
 
-    def tau(self, u, v):
+    def i(self, t, u, args=None):
+        v, m, h = u
+        return self.g(t, u, args) * (v - self.e)
+
+    def tau(self, t, u, args=None):
+        v, m, h = u
         tau_m = 1 / (a_m(v) + b_m(v))
         tau_h = 1 / (a_h(v) + b_h(v))
-        return {"m": tau_m, "h": tau_h}
+        return tau_m, tau_h
 
-    def xinf(self, u, v):
-        tau = self.tau(u, v)
+    def ss(self, t, u, args=None):
+        v, m, h = u
+        tau = self.tau(t, u, args)
         m_inf = a_m(v) * tau["m"]
         h_inf = a_h(v) * tau["h"]
-        return {"m": m_inf, "h": h_inf}
+        return m_inf, h_inf
 
-    def __call__(self, t, u, v):
-        m = u["m"]
-        h = u["h"]
-
-        xinf = self.xinf(u, v)
-        tau = self.tau(u, v)
-        dm = -(m - xinf["m"]) / tau["m"]
-        dh = -(h - xinf["h"]) / tau["h"]
-        return {"m": dm, "h": dh}
-
-    def init(self, t, u, v):
-        return self.xinf(u, v)
-
+    def init(self, t, u, args=None):
+        return self.ss(t, u, args)
 
 class K(Channel):
-    gbar: Array = eqx.field(converter=jnp.array)
-    e: Array = eqx.field(converter=jnp.array)
+    reads = ("v", "n")
+    writes = ("n",)
+    ion: str = "k"
 
-    def __init__(self, gbar: Array = 0.036, e: Array = -77.0):
-        super().__init__()
+    def __init__(self, gbar: Array = 36.0, e: Array = -77.0, name: str = None, index: Array = None):
+        super().__init__(name, index)
         self.gbar = gbar
         self.e = e
 
-    def g(self, u):
-        n = u["n"]
+    def vf(self, t, u, args=None):
+        v, n = u
+        dn = a_n(v) * (1 - n) - b_n(v) * n
+        return dn
+
+    def g(self, t, u, args=None):
+        v, n = u
         return self.gbar * n**4
 
-    def tau(self, u, v):
-        tau_n = 1 / (a_n(v) + b_n(v))
-        return {"n": tau_n}
+    def i(self, t, u, args=None):
+        v, n = u
+        return self.g(t, u, args) * (v - self.e)
 
-    def xinf(self, u, v):
-        tau = self.tau(u, v)
-        n_inf = a_n(v) * tau["n"]
-        return {"n": n_inf}
+    def tau(self, t, u, args=None):
+        v, n = u
+        return 1 / (a_n(v) + b_n(v))
 
-    def __call__(self, t, u, v):
-        n = u["n"]
-        xinf = self.xinf(u, v)
-        tau = self.tau(u, v)
-        dn = -(n - xinf["n"]) / tau["n"]
-        return {"n": dn}
+    def ss(self, t, u, args=None):
+        v, n = u
+        return a_n(v) * 1 / (a_n(v) + b_n(v))
 
-    def init(self, t, u, v):
-        return self.xinf(u, v)
+    def init(self, t, u, args=None):
+        return self.ss(t, u, args)
+
+class Leak(Channel):
+    reads = ("v",)
+    writes = ()
+    ion: str = "leak"
+
+    def __init__(self, gbar: Array = 0.0003, e: Array = -54.3, name: str = None, index: Array = None):
+        super().__init__(name, index)
+        self.gbar = gbar
+        self.e = e
+
+    def vf(self, t, u, args=None):
+        return ()
+
+    def g(self, t, u, args=None):
+        return self.gbar
+
+    def i(self, t, u, args=None):
+        v = u[0]
+        return self.g(t, u, args) * (v - self.e)
+    
+    def tau(self, t, u, args=None):
+        return ()
+
+    def ss(self, t, u, args=None):
+        return ()
+
+    def init(self, t, u, args=None):
+        return ()

@@ -23,13 +23,10 @@ class Module(eqx.Module):
     r: Array = eqx.field(converter=jnp.array)
     c: Array = eqx.field(converter=jnp.array)
     ra: Array = eqx.field(converter=jnp.array)
-    x: Array = eqx.field(converter=jnp.array)
-    y: Array = eqx.field(converter=jnp.array)
-    z: Array = eqx.field(converter=jnp.array)
-    channels: dict[str, Channel]
-    stimuli: dict[str, Stimulus]  # add to state or current
-    clamps: dict[str, Clamp]  # set state or current
-    # synapses: List[Synapse]
+    xyz: Array = eqx.field(converter=jnp.array)
+    mechanisms: tuple[Channel] = eqx.field(converter=tuple) # TODO: Add Pump
+    externals: tuple[Stimulus, Clamp] = eqx.field(converter=tuple)
+    # synapses: List[Synapse] = eqx.field(converter=tuple)
 
     parents: Array = eqx.field(converter=jnp.array)
     index: Array = eqx.field(converter=jnp.array)
@@ -43,9 +40,7 @@ class Module(eqx.Module):
         r: Array = 1.0,
         c: Array = 1.0,
         ra: Array = 5000.0,
-        x: Array = 0.0,
-        y: Array = 0.0,
-        z: Array = 0.0,
+        xyz: Array = jnp.array([0.0, 0.0, 0.0]),
         parents: Array = -1,
         index: Array = 0,
         id: Array = 0,
@@ -55,12 +50,9 @@ class Module(eqx.Module):
         self.r = r
         self.c = c
         self.ra = ra
-        self.x = x
-        self.y = y
-        self.z = z
-        self.channels = {}
-        self.stimuli = {}
-        self.clamps = {}
+        self.xyz = xyz
+        self.mechanisms = ()
+        self.externals = ()
 
         self.parents = parents
         self.index = index
@@ -77,58 +69,58 @@ class Module(eqx.Module):
     def num_comps(self):
         return self.l.size
 
-    def g_coupling(self, i, j):
-        """
-        from `https://en.wikipedia.org/wiki/Compartmental_neuron_models`.
-        `rius`: um, `Ra`: ohm cm, `l`: um, `g`: mS / cm^2
-        """
-        r_i, l_i, ra_i = self.r[i], self.l[i], self.ra[i]
-        r_j, l_j, ra_j = self.r[j], self.l[j], self.ra[j]
-        g_ij = r_i * r_j**2 / (ra_i * r_j**2 * l_i + ra_j * r_i**2 * l_j) / l_i
-        return g_ij * 1e7
+    # def g_coupling(self, i, j):
+    #     """
+    #     from `https://en.wikipedia.org/wiki/Compartmental_neuron_models`.
+    #     `rius`: um, `Ra`: ohm cm, `l`: um, `g`: mS / cm^2
+    #     """
+    #     r_i, l_i, ra_i = self.r[i], self.l[i], self.ra[i]
+    #     r_j, l_j, ra_j = self.r[j], self.l[j], self.ra[j]
+    #     g_ij = r_i * r_j**2 / (ra_i * r_j**2 * l_i + ra_j * r_i**2 * l_j) / l_i
+    #     return g_ij * 1e7
 
-    def G_sparse(self):
-        i, j = self.edges.T
-        n = self.num_comps
-        g_ij = vmap(self.g_coupling)(i, j)
+    # def G_sparse(self):
+    #     i, j = self.edges.T
+    #     n = self.num_comps
+    #     g_ij = vmap(self.g_coupling)(i, j)
 
-        # Concatenate off-diagonal (edges) and diagonal entries
-        rows = jnp.concatenate([i, jnp.arange(n)])
-        cols = jnp.concatenate([j, jnp.arange(n)])
-        inds = jnp.stack([rows, cols], axis=1)
-        values = jnp.concatenate([g_ij, -jnp.bincount(i, weights=g_ij, length=n)])
+    #     # Concatenate off-diagonal (edges) and diagonal entries
+    #     rows = jnp.concatenate([i, jnp.arange(n)])
+    #     cols = jnp.concatenate([j, jnp.arange(n)])
+    #     inds = jnp.stack([rows, cols], axis=1)
+    #     values = jnp.concatenate([g_ij, -jnp.bincount(i, weights=g_ij, length=n)])
 
-        return values, inds
+    #     return values, inds
 
-    def dgates(self, t, u, v):
-        du = jax.tree.map(
-            lambda c: c(t, u.get(c.name, {}), u["v"][c.index]),
-            self.channels,
-            is_leaf=is_instance_of(Channel),
-        )
-        return du
+    # def dgates(self, t, u, v):
+    #     du = jax.tree.map(
+    #         lambda c: c(t, u.get(c.name, {}), u["v"][c.index]),
+    #         self.channels,
+    #         is_leaf=is_instance_of(Channel),
+    #     )
+    #     return du
 
-    def compute_i_total(self, t, u, v):
-        def sum_i(i0, c):
-            u_ = u.get(c.name, {})
-            i = c.i(t, u_, u["v"][c.index])
-            return i0.at[c.index].add(i)
+    # def compute_i_total(self, t, u, v):
+    #     def sum_i(i0, c):
+    #         u_ = u.get(c.name, {})
+    #         i = c.i(t, u_, u["v"][c.index])
+    #         return i0.at[c.index].add(i)
 
-        i0 = jnp.zeros(self.num_comps)
-        i_int = jax.tree.reduce(
-            sum_i, self.channels, i0, is_leaf=is_instance_of(Channel)
-        )
-        i_ext = jax.tree.reduce(
-            sum_i, self.stimuli, i0, is_leaf=is_instance_of(Stimulus)
-        )
-        # i_clamp = jax.tree.map(sum_i, self.clamps, is_leaf=is_instance(Clamp))
+    #     i0 = jnp.zeros(self.num_comps)
+    #     i_int = jax.tree.reduce(
+    #         sum_i, self.channels, i0, is_leaf=is_instance_of(Channel)
+    #     )
+    #     i_ext = jax.tree.reduce(
+    #         sum_i, self.stimuli, i0, is_leaf=is_instance_of(Stimulus)
+    #     )
+    #     # i_clamp = jax.tree.map(sum_i, self.clamps, is_leaf=is_instance(Clamp))
 
-        i_ext_total = jax.tree.reduce(lambda x, y: x + y, i_ext, initializer=0.0)
-        i_int_total = jax.tree.reduce(lambda x, y: x + y, i_int, initializer=0.0)
+    #     i_ext_total = jax.tree.reduce(lambda x, y: x + y, i_ext, initializer=0.0)
+    #     i_int_total = jax.tree.reduce(lambda x, y: x + y, i_int, initializer=0.0)
 
-        return i_ext_total * 1e5 / self.area - i_int_total * 1e3
+    #     return i_ext_total * 1e5 / self.area - i_int_total * 1e3
 
-    def __call__(self, t, u, args=None):
+    def vf(self, t, u, args=None):
         # TODO: Add clamping (for states and currents)
         # TODO: Add state sharing
 
