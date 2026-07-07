@@ -1,4 +1,4 @@
-from tinyjaxley.mechanisms import K, Leak, Na
+from tinyjaxley.mechanisms import HH, K, Leak, Na, StepCurrent
 from tinyjaxley.model import Model
 
-__all__ = ["K", "Leak", "Model", "Na"]
+__all__ = ["HH", "K", "Leak", "Model", "Na", "StepCurrent"]

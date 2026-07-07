@@ -4,11 +4,7 @@ import copy
 
 import jax.numpy as jnp
 
-from tinyjaxley.utils import Field
-
-
-def is_field(obj):
-    return isinstance(obj, Field)
+from tinyjaxley.utils import is_field
 
 
 class Mechanism:
@@ -17,7 +13,7 @@ class Mechanism:
     domain = "comp"
     s0 = ()
     p0 = ()
-    current = None
+    i0 = ()
     is_density = True
     index = None
 
@@ -55,17 +51,23 @@ class Mechanism:
             else entry
             for entry in self.p0
         )
+        mech.i0 = tuple(
+            entry._broadcast(index=mech.index, group=group)
+            if is_field(entry)
+            else entry
+            for entry in self.i0
+        )
         return mech
 
-    def init(self, t, u, p, args):
-        return None
+    def init(self, t, u, p, args=None):
+        return ()
 
-    def vf(self, t, u, p, args):
-        return jnp.array([])
+    def vf(self, t, u, p, args=None):
+        return ()
 
-    def i(self, t, u, p, args):
-        return 0.0
+    def i(self, t, u, p, args=None):
+        return ()
 
-
-class Channel(Mechanism):
-    is_density = True
+    # def step(self, t0, t1, u0, p, args):
+    #     dt = t1 - t0
+    #     return u0 + self.vf(t0, u0, p, args)*dt
