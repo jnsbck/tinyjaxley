@@ -1,21 +1,24 @@
+from typing import Any, Final
+
+import jax
 import jax.numpy as jnp
 
 
-class Ns(dict):
+class Ns(dict[str, Any]):
     """Dictionary namespace with attribute access."""
 
     __getattr__ = dict.__getitem__
 
 
-IDENTITY = object()
+IDENTITY: Final = object()
 
 
-def _safe_exp(x):
+def _safe_exp(x: jax.Array) -> jax.Array:
     limit = -jnp.log(jnp.finfo(x.dtype).eps)
     return jnp.exp(jnp.minimum(x, limit))
 
 
-def gather(x, idx):
+def gather(x: jax.Array, idx: Any) -> jax.Array:
     """Gather slots while preserving the measured fast paths."""
     if x.shape[0] == 1:
         return x[0]
@@ -24,14 +27,14 @@ def gather(x, idx):
     return x[idx]
 
 
-def scatter_add(out, idx, val):
+def scatter_add(out: jax.Array, idx: Any, val: jax.Array) -> jax.Array:
     """Scatter-add slot values while bypassing identity projections."""
     if idx is IDENTITY:
         return out + val
     return out.at[idx].add(val)
 
 
-def vtrap(x, scale):
+def vtrap(x: jax.Array, scale: float | jax.Array) -> jax.Array:
     threshold = jnp.sqrt(jnp.finfo(x.dtype).eps) * scale
     near_zero = jnp.abs(x) < threshold
     safe_x = jnp.where(near_zero, scale, x)

@@ -1,0 +1,1 @@
+# SWC Reader in as few lines as possible

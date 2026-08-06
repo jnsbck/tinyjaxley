@@ -1,7 +1,8 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from tinycable import K, Na, Leak, Ns
+from tinycable import K, Na, Cable, Channel, Leak, Model, Ns
 
 
 def _namespaces(mechanism, voltages):
@@ -23,6 +24,7 @@ def test_hh_mechanism_contract():
 
     for mechanism in (Leak(), Na(), K()):
         # Declarations provide the static information compilation will consume.
+        assert isinstance(mechanism, Channel)
         assert mechanism.density
         assert mechanism.states["v"] is None
         assert len(mechanism.currents) == 1
@@ -75,3 +77,27 @@ def test_hh_rate_singularities_have_finite_gradients():
         voltage = jnp.array(voltage)
         assert jnp.isfinite(rate(voltage))
         assert jnp.isfinite(jax.grad(rate)(voltage))
+
+
+def test_mechanism_declarations_are_editable_templates():
+    state_default = np.array([1.0, 2.0])
+
+    class Custom(Channel):
+        states = {"Custom.x": state_default}
+        params = {"Custom.rate": 3.0}
+
+    mechanism = Custom()
+    model = Model(Cable(1)).insert(mechanism)
+
+    # Mechanism instances use the mutable class templates directly.
+    Custom.states["Custom.y"] = 3.0
+    state_default[0] = 9.0
+    assert Custom.states["Custom.x"][0] == 9.0
+    assert Custom.states["Custom.y"] == 3.0
+    assert mechanism.states is Custom.states
+
+    # Model insertion snapshots defaults into independent immutable Fields.
+    assert "Custom.y" not in model._fields
+    np.testing.assert_array_equal(
+        model._fields["Custom.x"].slots, np.array([[1.0, 2.0]])
+    )

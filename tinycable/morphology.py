@@ -1,52 +1,75 @@
 from dataclasses import dataclass, field
+from typing import Self
 
 import numpy as np
+import numpy.typing as npt
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Morphology:
     """Compartment topology and initial cylindrical geometry."""
 
-    parent: np.ndarray
-    len: np.ndarray = field(default_factory=lambda: np.empty(0))
-    rad: np.ndarray = field(default_factory=lambda: np.empty(0))
-    xyz: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
-    swc: np.ndarray = field(default_factory=lambda: np.empty((0, 7)))
+    tree: npt.ArrayLike
+    len: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+    rad: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+    xyz: npt.ArrayLike = field(default_factory=lambda: np.empty((0, 3)))
+    swc: npt.ArrayLike = field(default_factory=lambda: np.empty((0, 7)))
 
-    def __post_init__(self):
-        parent = np.array(self.parent, dtype=np.int32, copy=True)
+    def __post_init__(self) -> None:
+        tree = np.array(self.tree, dtype=np.int32, copy=True)
         length = np.array(self.len, copy=True)
         radius = np.array(self.rad, copy=True)
         xyz = np.array(self.xyz, copy=True)
         swc = np.array(self.swc, copy=True)
-        for values in (parent, length, radius, xyz, swc):
-            values.setflags(write=False)
-        object.__setattr__(self, "parent", parent)
+        for vals in (tree, length, radius, xyz, swc):
+            vals.setflags(write=False)
+        object.__setattr__(self, "tree", tree)
         object.__setattr__(self, "len", length)
         object.__setattr__(self, "rad", radius)
         object.__setattr__(self, "xyz", xyz)
         object.__setattr__(self, "swc", swc)
 
     @classmethod
-    def single(cls, *, len=100.0, rad=10.0, xyz=(0.0, 0.0, 0.0)):
-        return cls(
-            np.array([0], dtype=np.int32),
-            len=np.array([len]),
-            rad=np.array([rad]),
-            xyz=np.array([xyz]),
-            swc=np.array([[1, 1, *xyz, rad, -1]], dtype=float),
-        )
+    def from_swc(cls, swc: npt.ArrayLike) -> Self:
+        raise NotImplementedError("Morphology.from_swc is not yet implemented")
 
     @property
-    def n(self):
-        return len(self.parent)
+    def n(self) -> int:
+        return len(self.tree)
 
     @property
-    def area(self):
+    def area(self) -> np.ndarray:
         """Lateral membrane area in cm^2."""
         return 2.0 * np.pi * self.rad * self.len * 1e-8
 
     @property
-    def volume(self):
+    def volume(self) -> np.ndarray:
         """Cylindrical compartment volume in um^3."""
         return np.pi * self.rad**2 * self.len
+
+
+class Cable(Morphology):
+    def __init__(
+        self, n: int, *, comp_len: float = 10.0, comp_rad: float = 1.0
+    ) -> None:
+        assert n > 0, "Cable requires n > 0"
+        tree = np.arange(n, dtype=np.int32)
+        tree[1:] -= 1
+        length = np.full(n, comp_len)
+        radius = np.full(n, comp_rad)
+        xyz = np.zeros((n, 3), dtype=float)
+        xyz[:, 0] = (np.arange(n) + 0.5) * comp_len
+
+        swc = np.zeros((n + 1, 7), dtype=float)
+        swc[:, 0] = np.arange(1, n + 2)
+        swc[:, 1] = 3
+        swc[:, 2] = np.arange(n + 1) * comp_len
+        swc[:, 5] = comp_rad
+        swc[:, 6] = np.concatenate(([-1], np.arange(1, n + 1)))
+
+        super().__init__(tree, len=length, rad=radius, xyz=xyz, swc=swc)
+
+
+class Point(Cable):
+    def __init__(self, *, comp_len: float = 10.0, comp_rad: float = 1.0) -> None:
+        super().__init__(1, comp_len=comp_len, comp_rad=comp_rad)
