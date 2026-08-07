@@ -5,27 +5,24 @@ from typing import Any, Self
 import numpy as np
 import numpy.typing as npt
 
+from tinycable.utils import readonly
+
 
 def _first(values: np.ndarray) -> Any:
     return values[0]
 
 
-def _readonly(values: npt.ArrayLike, dtype: np.dtype = np.int32) -> np.ndarray:
-    array = np.array(values, dtype=dtype, copy=True)
-    assert array.ndim == 1, "indices must be one-dimensional"
-    array.setflags(write=False)
-    return array
-
-
 def _canonical_index(index: npt.ArrayLike) -> np.ndarray:
-    index = _readonly(index, dtype=np.int32)
+    index = readonly(index, dtype=np.int32)
+    assert index.ndim == 1, "indices must be one-dimensional"
     assert np.all(index[1:] > index[:-1]), "index must be sorted and deduplicated"
     return index
 
 
 def _explicit_groups(groups: npt.ArrayLike | None, n_index: int) -> np.ndarray:
     groups = np.arange(n_index, dtype=np.int32) if groups is None else groups
-    groups = _readonly(groups, dtype=np.int32)
+    groups = readonly(groups, dtype=np.int32)
+    assert groups.ndim == 1, "indices must be one-dimensional"
     assert groups.shape == (n_index,), "groups must align with index"
     unique = np.unique(groups)
     expected = np.arange(len(unique), dtype=np.int32)
@@ -80,7 +77,7 @@ class Field:
                     f"{n_slots} groups"
                 )
 
-        slots.setflags(write=False)
+        slots = readonly(slots)
         object.__setattr__(self, "slots", slots)
         object.__setattr__(self, "index", index)
         object.__setattr__(self, "groups", groups)
@@ -111,7 +108,8 @@ class Field:
     def slot_index(self, index: npt.ArrayLike) -> np.ndarray:
         """Return one raw slot index per requested site."""
         support = self._require_index()
-        requested = _readonly(index, dtype=np.int32)
+        requested = readonly(index, dtype=np.int32)
+        assert requested.ndim == 1, "indices must be one-dimensional"
         positions, present = _locate(support, requested)
         if not np.all(present):
             missing = requested[~present][:10].tolist()

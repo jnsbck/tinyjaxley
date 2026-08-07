@@ -1,8 +1,10 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
-from tinycable import IDENTITY, Ns, gather, scatter_add
-from tinycable.utils import _safe_exp
+from tinycable import IDENTITY, Ns, dict2mapping, gather, scatter_add
+from tinycable.utils import _safe_exp, readonly
 
 
 def _primitives(jaxpr):
@@ -15,6 +17,26 @@ def test_namespace():
     # Mechanisms can use mapping or attribute access without conversion.
     assert ns["value"] == 3
     assert ns.value == 3
+
+
+def test_dict2mapping_copies_and_freezes():
+    values = {"value": 3}
+    mapping = dict2mapping(values)
+
+    # The wrapper prevents both source aliasing and direct mapping mutation.
+    values["value"] = 4
+    assert mapping["value"] == 3
+    with pytest.raises(TypeError):
+        mapping["other"] = 5
+
+
+def test_readonly_copies_and_freezes_arrays():
+    values = np.array([1.0, 2.0])
+    frozen = readonly(values)
+
+    values[0] = 9.0
+    np.testing.assert_array_equal(frozen, np.array([1.0, 2.0]))
+    assert not frozen.flags.writeable
 
 
 def test_gather():

@@ -1,51 +1,285 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Any, Self
 
 import numpy as np
 import numpy.typing as npt
 
+from tinycable.swc import segment_swc, section_tree
+from tinycable.utils import dict2mapping, readonly
+
+
+def _label_tree(tree: np.ndarray) -> dict[str, np.ndarray]:
+    comp = np.arange(len(tree), dtype=np.int32)
+    roots = tree == comp
+
+    root = comp.copy()
+    while np.any(root != tree[root]):
+        root = tree[root]
+
+    _, cell = np.unique(root, return_inverse=True)
+    cell = cell.astype(np.int32)
+
+    branch = np.full(len(tree), -1, np.int32)
+    for i, seg in enumerate(section_tree(tree)):
+        branch[seg[1:]] = i
+        if roots[seg[0]] and branch[seg[0]] < 0:
+            branch[seg[0]] = i
+
+    # A singleton root has no section; it is its own branch.
+    missing = np.flatnonzero(branch < 0)
+    if len(missing):
+        start = 0 if not np.any(branch >= 0) else int(branch.max()) + 1
+        branch[missing] = start + np.arange(len(missing), dtype=np.int32)
+
+    return {"cell": cell, "branch": branch, "comp": comp}
+
+
+def _labels(
+    labels: Mapping[str, npt.ArrayLike] | None,
+    tree: np.ndarray,
+) -> Mapping[str, np.ndarray]:
+    result = _label_tree(tree)
+
+    if labels is not None:
+        result.update(dict(labels))
+
+    for name, values in result.items():
+        assert isinstance(name, str), "label names must be strings"
+
+        raw = np.asarray(values)
+        assert raw.ndim == 1, f"{name} must be one-dimensional"
+        assert len(raw) == len(tree), f"{name} must have length {len(tree)}"
+
+        is_integer = np.issubdtype(raw.dtype, np.integer)
+        is_boolean = np.issubdtype(raw.dtype, np.bool_)
+
+        if name in {"cell", "branch", "comp"}:
+            assert is_integer, f"{name} must be integer-valued"
+            unique = np.unique(raw)
+            assert np.array_equal(unique, np.arange(len(unique), dtype=np.int32)), (
+                f"{name} labels must be compact from zero"
+            )
+        else:
+            assert is_boolean, f"{name} must be boolean-valued"
+
+        result[name] = readonly(
+            raw,
+            dtype=np.int32 if is_integer else np.bool_,
+        )
+
+    return dict2mapping(result)
+
+
+def _extend_swc(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    if not left.size:
+        return right
+    if not right.size:
+        return left
+
+    shifted = np.array(right, copy=True)
+    offset = int(left[:, 0].max()) + 1 - int(right[:, 0].min())
+    shifted[:, 0] += offset
+    shifted[shifted[:, 6] >= 0, 6] += offset
+    return np.concatenate((left, shifted), axis=0)
+
+
+def _init_geometry(
+    ln: np.ndarray,
+    rad: np.ndarray,
+    area: npt.ArrayLike,
+    vol: npt.ArrayLike,
+    rin: npt.ArrayLike,
+    rout: npt.ArrayLike,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Fill omitted cylindrical geometry and resistive-load arrays."""
+    area = np.asarray(area)
+    area = 2 * np.pi * rad * ln * 1e-8 if not area.size else area
+
+    vol = np.asarray(vol)
+    vol = np.pi * rad**2 * ln if not vol.size else vol
+
+    rin = np.asarray(rin)
+    rout = np.asarray(rout)
+    n = len(rad)
+    if (not rin.size or not rout.size) and len(rad) == n:
+        load = np.zeros(n)
+        np.divide(ln, 2 * np.pi * rad**2, where=rad > 0, out=load)
+        if not rin.size:
+            rin = load
+        if not rout.size:
+            rout = load
+    return area, vol, rin, rout
+
 
 @dataclass(frozen=True, eq=False)
 class Morphology:
-    """Compartment topology and initial cylindrical geometry."""
-
     tree: npt.ArrayLike
+
     len: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
     rad: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
     xyz: npt.ArrayLike = field(default_factory=lambda: np.empty((0, 3)))
+
     swc: npt.ArrayLike = field(default_factory=lambda: np.empty((0, 7)))
 
+    area: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+    volume: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+    rin: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+    rout: npt.ArrayLike = field(default_factory=lambda: np.empty(0))
+
+    labels: Mapping[str, npt.ArrayLike] | None = None
+
+    index: np.ndarray = field(init=False)
+
     def __post_init__(self) -> None:
-        tree = np.array(self.tree, dtype=np.int32, copy=True)
-        length = np.array(self.len, copy=True)
-        radius = np.array(self.rad, copy=True)
-        xyz = np.array(self.xyz, copy=True)
-        swc = np.array(self.swc, copy=True)
-        for vals in (tree, length, radius, xyz, swc):
-            vals.setflags(write=False)
+        tree = readonly(self.tree, dtype=np.int32)
+        length = readonly(self.len)
+        radius = readonly(self.rad)
+        xyz = readonly(self.xyz)
+        n = len(tree)
+
+        area, volume, rin, rout = _init_geometry(
+            length,
+            radius,
+            self.area,
+            self.volume,
+            self.rin,
+            self.rout,
+        )
+
         object.__setattr__(self, "tree", tree)
         object.__setattr__(self, "len", length)
         object.__setattr__(self, "rad", radius)
         object.__setattr__(self, "xyz", xyz)
-        object.__setattr__(self, "swc", swc)
-
-    @classmethod
-    def from_swc(cls, swc: npt.ArrayLike) -> Self:
-        raise NotImplementedError("Morphology.from_swc is not yet implemented")
+        object.__setattr__(self, "area", readonly(area))
+        object.__setattr__(self, "volume", readonly(volume))
+        object.__setattr__(self, "rin", readonly(rin))
+        object.__setattr__(self, "rout", readonly(rout))
+        object.__setattr__(self, "swc", readonly(self.swc))
+        object.__setattr__(
+            self,
+            "index",
+            readonly(np.arange(n, dtype=np.int32)),
+        )
+        object.__setattr__(self, "labels", _labels(self.labels, tree))
 
     @property
     def n(self) -> int:
-        return len(self.tree)
+        return len(self.index)
 
-    @property
-    def area(self) -> np.ndarray:
-        """Lateral membrane area in cm^2."""
-        return 2.0 * np.pi * self.rad * self.len * 1e-8
+    def plot(
+        self,
+        *,
+        dims: str = "xy",
+        ax: Any | None = None,
+        marker: str | None = None,
+        kind: str = "swc",
+    ) -> Any:
+        """Plot segmented compartments or the raw SWC morphology."""
+        assert len(dims) == 2 and all(dim in "xyz" for dim in dims), (
+            "dims must contain two axes from 'xyz'"
+        )
+        assert dims[0] != dims[1], "dims must contain two distinct axes"
+        assert kind in {"seg", "swc"}, "kind must be 'seg' or 'swc'"
 
-    @property
-    def volume(self) -> np.ndarray:
-        """Cylindrical compartment volume in um^3."""
-        return np.pi * self.rad**2 * self.len
+        if kind == "seg":
+            if self.xyz.shape != (self.n, 3):
+                raise ValueError("Morphology.xyz must have shape (n, 3) for plotting")
+            points = self.xyz
+            edges = np.flatnonzero(self.tree != self.index)
+            parents = self.tree[edges]
+        else:
+            swc = np.asarray(self.swc)
+            points = swc[:, 2:5]
+            ids = swc[:, 0].astype(np.int64)
+            rows = {int(node_id): row for row, node_id in enumerate(ids)}
+            assert len(rows) == len(ids), "SWC node IDs must be unique"
+            raw_parents = swc[:, 6].astype(np.int64)
+            edges = np.flatnonzero(raw_parents >= 0)
+            try:
+                parents = np.asarray(
+                    [rows[int(parent)] for parent in raw_parents[edges]],
+                    dtype=np.int32,
+                )
+            except KeyError as error:
+                raise ValueError("SWC parent ID does not reference a node") from error
+
+        if ax is None:
+            import matplotlib.pyplot as plt
+
+            _, ax = plt.subplots()
+
+        axes = {"x": 0, "y": 1, "z": 2}
+        x_axis, y_axis = axes[dims[0]], axes[dims[1]]
+        if len(edges):
+            x = np.full(3 * len(edges), np.nan)
+            y = np.full(3 * len(edges), np.nan)
+            x[0::3] = points[parents, x_axis]
+            x[1::3] = points[edges, x_axis]
+            y[0::3] = points[parents, y_axis]
+            y[1::3] = points[edges, y_axis]
+            ax.plot(x, y)
+        if marker is not None:
+            ax.plot(
+                points[:, x_axis],
+                points[:, y_axis],
+                linestyle="None",
+                marker=marker,
+            )
+        ax.set_xlabel(dims[0])
+        ax.set_ylabel(dims[1])
+        ax.set_aspect("equal")
+        return ax
+
+    @classmethod
+    def from_swc(
+        cls,
+        swc: npt.ArrayLike,
+        *,
+        nseg_per_sec: int = 1,
+    ) -> Self:
+        tree, attrs, labels = segment_swc(swc, nseg_per_sec=nseg_per_sec)
+        return cls(
+            tree,
+            xyz=attrs[:, :3],
+            rad=attrs[:, 3],
+            len=attrs[:, 4],
+            area=attrs[:, 5],
+            volume=attrs[:, 6],
+            rin=attrs[:, 7],
+            rout=attrs[:, 8],
+            swc=swc,
+            labels=labels,
+        )
+
+    def extend(self, other: "Morphology") -> "Morphology":
+        offset = self.n
+        reserved = {"comp", "branch", "cell"}
+        names = [name for name in self.labels if name not in reserved]
+        names.extend(
+            name for name in other.labels if name not in reserved and name not in names
+        )
+        labels = {
+            name: np.concatenate(
+                (
+                    self.labels.get(name, np.zeros(self.n, dtype=bool)),
+                    other.labels.get(name, np.zeros(other.n, dtype=bool)),
+                )
+            )
+            for name in names
+        }
+        return Morphology(
+            np.concatenate((self.tree, other.tree + offset)),
+            len=np.concatenate((self.len, other.len)),
+            rad=np.concatenate((self.rad, other.rad)),
+            xyz=np.concatenate((self.xyz, other.xyz)),
+            area=np.concatenate((self.area, other.area)),
+            volume=np.concatenate((self.volume, other.volume)),
+            rin=np.concatenate((self.rin, other.rin)),
+            rout=np.concatenate((self.rout, other.rout)),
+            swc=_extend_swc(self.swc, other.swc),
+            labels=labels,
+        )
 
 
 class Cable(Morphology):

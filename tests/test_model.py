@@ -1,7 +1,18 @@
 import numpy as np
 import pytest
 
-from tinycable import K, Na, Cable, Channel, Field, Leak, Model, Morphology
+from tinycable import (
+    Exp2Syn,
+    K,
+    Na,
+    Cable,
+    Channel,
+    Field,
+    Leak,
+    Model,
+    Morphology,
+    Synapse,
+)
 
 
 def _project(field):
@@ -109,6 +120,7 @@ def test_insert_places_fields_and_mechanisms_on_a_cable():
 
     # Placement edits are functional and declarations retain immutable site arrays.
     assert base._mechs == {}
+    assert base._syns == {}
     assert tuple(model._mechs) == ("sodium", "k")
     assert all(
         not mechanism.index.flags.writeable for mechanism in model._mechs.values()
@@ -190,6 +202,79 @@ def test_repeated_mechanism_insertion_unions_placement():
     fields = _fields(model)
     np.testing.assert_array_equal(fields["Leak.g"].index, np.array([1, 2, 4]))
     np.testing.assert_array_equal(fields["eL"].index, np.array([1, 2, 4]))
+
+
+def test_synapse_insertion_allocates_unique_edge_pairs():
+    base = Model(Cable(3))
+    model = base.insert(Exp2Syn([0], [1], name="chemical"))
+    synapse = model._syns["chemical"]
+
+    # Edge indices begin after compartments and private Fields use edge support.
+    np.testing.assert_array_equal(synapse.index, np.array([3], np.int32))
+    np.testing.assert_array_equal(synapse.pre_index, np.array([0], np.int32))
+    np.testing.assert_array_equal(synapse.post_index, np.array([1], np.int32))
+    np.testing.assert_array_equal(model._fields["Exp2Syn.g"].index, np.array([3]))
+
+    # Repeating a pair appends another distinct edge instance.
+    replaced = model.insert(Exp2Syn([0], [1], name="chemical"))
+    np.testing.assert_array_equal(replaced._syns["chemical"].index, np.array([3, 4]))
+    np.testing.assert_array_equal(
+        replaced._syns["chemical"].pre_index, np.array([0, 0])
+    )
+    np.testing.assert_array_equal(
+        replaced._syns["chemical"].post_index, np.array([1, 1])
+    )
+    assert replaced._num_syns == 2
+
+    # A new pair under the same name extends the existing edge set.
+    extended = model.insert(Exp2Syn([1], [2], name="chemical"))
+    synapse = extended._syns["chemical"]
+    np.testing.assert_array_equal(synapse.index, np.array([3, 4], np.int32))
+    np.testing.assert_array_equal(synapse.pre_index, np.array([0, 1], np.int32))
+    np.testing.assert_array_equal(synapse.post_index, np.array([1, 2], np.int32))
+
+    duplicate_rows = base.insert(Exp2Syn([0, 0], [1, 1]))
+    np.testing.assert_array_equal(
+        duplicate_rows._syns["exp2syn"].index, np.array([3, 4], np.int32)
+    )
+    with pytest.raises(AssertionError, match="requires pre_index"):
+        base.insert(Synapse())
+
+
+def test_same_name_synapse_replaces_with_a_different_type():
+    class OtherSynapse(Synapse):
+        states = {"OtherSynapse.x": 1.0}
+
+    base = Model(Cable(2)).insert(Exp2Syn([0], [1], name="chemical"))
+    replaced = base.insert(OtherSynapse([0], [1], name="chemical"))
+
+    # Name selects the edge set even when the declaration type changes.
+    assert isinstance(replaced._syns["chemical"], OtherSynapse)
+    np.testing.assert_array_equal(replaced._syns["chemical"].index, np.array([2, 3]))
+    np.testing.assert_array_equal(
+        replaced._syns["chemical"].pre_index, np.array([0, 0])
+    )
+    np.testing.assert_array_equal(
+        replaced._syns["chemical"].post_index, np.array([1, 1])
+    )
+    np.testing.assert_array_equal(
+        replaced._fields["OtherSynapse.x"].index, np.array([2, 3])
+    )
+
+    # Compartment mechanisms and Synapses have independent name namespaces.
+    coexisting = replaced.insert(Leak(name="chemical", index=[0]))
+    assert isinstance(coexisting._mechs["chemical"], Leak)
+    assert isinstance(coexisting._syns["chemical"], OtherSynapse)
+
+
+def test_unplaced_fields_require_explicit_support_after_synapse_insertion():
+    model = Model(Cable(2)).insert(Exp2Syn([0], [1]))
+
+    with pytest.raises(ValueError, match="explicit index"):
+        model.insert(Field("temperature", 37.0))
+
+    explicit = model.insert(Field("temperature", 37.0, index=[0]))
+    np.testing.assert_array_equal(explicit._fields["temperature"].index, np.array([0]))
 
 
 def test_share_is_eager_and_unshare_uses_current_values():

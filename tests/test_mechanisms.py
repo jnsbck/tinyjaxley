@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tinycable import K, Na, Cable, Channel, Leak, Model, Ns
+from tinycable import Exp2Syn, K, Na, Cable, Channel, Leak, Model, Ns, Synapse
 
 
 def _namespaces(mechanism, voltages):
@@ -77,6 +77,23 @@ def test_hh_rate_singularities_have_finite_gradients():
         voltage = jnp.array(voltage)
         assert jnp.isfinite(rate(voltage))
         assert jnp.isfinite(jax.grad(rate)(voltage))
+
+
+def test_exp2syn_contract():
+    synapse = Exp2Syn([0, 1], [1, 0])
+    voltages = jnp.array([-65.0, -20.0])
+    states, params = _namespaces(synapse, voltages)
+    pre = Ns(v=jnp.array([-65.0, -20.0]))
+    post = Ns(v=jnp.array([-60.0, -10.0]))
+
+    # Synapses reuse mechanism declarations while exposing two read contexts.
+    assert isinstance(synapse, Synapse)
+    assert synapse.pre == ("v",)
+    assert synapse.post == ("v",)
+    assert not synapse.pre_index.flags.writeable
+    assert not synapse.post_index.flags.writeable
+    assert set(synapse.d(0.0, states, params, pre, post)) == {"g"}
+    assert synapse.i(0.0, states, params, pre, post).shape == voltages.shape
 
 
 def test_mechanism_declarations_are_editable_templates():

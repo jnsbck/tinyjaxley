@@ -1,7 +1,12 @@
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, Final
+from typing import TypeVar
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import numpy.typing as npt
 
 
 class Ns(dict[str, Any]):
@@ -9,6 +14,29 @@ class Ns(dict[str, Any]):
 
     __getattr__ = dict.__getitem__
 
+
+T = TypeVar("T")
+
+
+def readonly(values: npt.ArrayLike, dtype: Any = None) -> np.ndarray:
+    """Copy an array-like value and make the result read-only."""
+    array = np.array(values, dtype=dtype, copy=True)
+    array.setflags(write=False)
+    return array
+
+
+def dict2mapping(values: Mapping[str, T]) -> Mapping[str, T]:
+    """Copy a dictionary into a read-only mapping."""
+    return MappingProxyType(dict(values))
+
+
+def _canonical_index(index: npt.ArrayLike, assert_sorted: bool = True) -> np.ndarray:
+    index = readonly(index, dtype=np.int32)
+    assert index.ndim == 1, "indices must be one-dimensional"
+    assert np.issubdtype(index.dtype, np.integer), "must be integer-valued"
+    if assert_sorted:
+        assert np.all(index[1:] > index[:-1]), "index must be sorted and deduplicated"
+    return index
 
 IDENTITY: Final = object()
 

@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 import numpy as np
 import numpy.typing as npt
 
-from tinycable.utils import Ns, _safe_exp, vtrap
+from tinycable.utils import Ns, _safe_exp, vtrap, _canonical_index
 
 
 @dataclass(frozen=True, eq=False)
@@ -22,12 +22,7 @@ class Mechanism:
         if self.name is None:
             object.__setattr__(self, "name", type(self).__name__.lower())
         if self.index is not None:
-            index = np.array(self.index, dtype=np.int32, copy=True)
-            assert index.ndim == 1, "index must be one-dimensional"
-            assert np.all(index[1:] > index[:-1]), (
-                "index must be sorted and deduplicated"
-            )
-            index.setflags(write=False)
+            index = _canonical_index(self.index)
             object.__setattr__(self, "index", index)
 
     def d(self, t: Any, s: Ns, p: Ns) -> dict[str, Any]:
@@ -39,6 +34,70 @@ class Mechanism:
 
 class Channel(Mechanism):
     density: ClassVar[bool] = True
+
+
+@dataclass(frozen=True, eq=False, init=False)
+class Synapse(Mechanism):
+    """Pure declaration for a directed edge mechanism."""
+
+    pre_index: npt.ArrayLike | None = None
+    post_index: npt.ArrayLike | None = None
+    pre: ClassVar[tuple[str, ...]] = ()
+    post: ClassVar[tuple[str, ...]] = ()
+
+    def __init__(
+        self,
+        pre_index: npt.ArrayLike | None = None,
+        post_index: npt.ArrayLike | None = None,
+        name: str | None = None,
+        index: npt.ArrayLike | None = None,
+    ) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "index", index)
+        object.__setattr__(
+            self, "pre_index", self._endpoint_array(pre_index, "pre_index")
+        )
+        object.__setattr__(
+            self, "post_index", self._endpoint_array(post_index, "post_index")
+        )
+        Mechanism.__post_init__(self)
+        if self.pre_index is not None and self.post_index is not None:
+            assert len(self.pre_index) == len(self.post_index), (
+                "pre_index and post_index must have equal lengths"
+            )
+
+    @staticmethod
+    def _endpoint_array(values: npt.ArrayLike | None, name: str) -> np.ndarray | None:
+        if values is None:
+            return None
+        return _canonical_index(values, assert_sorted=False)
+
+    def d(self, t: Any, s: Ns, p: Ns, pre: Ns, post: Ns) -> dict[str, Any]:
+        return {}
+
+    def i(self, t: Any, s: Ns, p: Ns, pre: Ns, post: Ns) -> Any:
+        return {}
+
+
+class Exp2Syn(Synapse):
+    currents: ClassVar[tuple[str, ...]] = ("i_syn",)
+    states: ClassVar[dict[str, Any]] = {"Exp2Syn.g": 0.0}
+    params: ClassVar[dict[str, Any]] = {
+        "Exp2Syn.gmax": 1e-4,
+        "Exp2Syn.tau": 2.0,
+        "Exp2Syn.e": 0.0,
+        "Exp2Syn.vth": -35.0,
+        "Exp2Syn.k": 5.0,
+    }
+    pre: ClassVar[tuple[str, ...]] = ("v",)
+    post: ClassVar[tuple[str, ...]] = ("v",)
+
+    def d(self, t: Any, s: Ns, p: Ns, pre: Ns, post: Ns) -> dict[str, Any]:
+        drive = 1.0 / (1.0 + _safe_exp(-(pre.v - p.vth) / p.k))
+        return {"g": (drive - s.g) / p.tau}
+
+    def i(self, t: Any, s: Ns, p: Ns, pre: Ns, post: Ns) -> Any:
+        return p.gmax * s.g * (post.v - p.e)
 
 
 class Leak(Channel):
