@@ -5,18 +5,11 @@ from typing import Any, Self
 import numpy as np
 import numpy.typing as npt
 
-from tinycable.utils import readonly
+from tinycable.utils import assert_index, readonly
 
 
 def _first(values: np.ndarray) -> Any:
     return values[0]
-
-
-def _canonical_index(index: npt.ArrayLike) -> np.ndarray:
-    index = readonly(index, dtype=np.int32)
-    assert index.ndim == 1, "indices must be one-dimensional"
-    assert np.all(index[1:] > index[:-1]), "index must be sorted and deduplicated"
-    return index
 
 
 def _explicit_groups(groups: npt.ArrayLike | None, n_index: int) -> np.ndarray:
@@ -64,7 +57,7 @@ class Field:
             assert self.groups is None, "unplaced fields cannot define groups"
             slots = slots.reshape((1, *slots.shape))
         else:
-            index = _canonical_index(self.index)
+            index = assert_index(self.index)
             groups = _explicit_groups(self.groups, len(index))
             n_slots = 0 if not len(groups) else int(groups.max()) + 1
             if slots.ndim == 0:
@@ -108,8 +101,7 @@ class Field:
     def slot_index(self, index: npt.ArrayLike) -> np.ndarray:
         """Return one raw slot index per requested site."""
         support = self._require_index()
-        requested = readonly(index, dtype=np.int32)
-        assert requested.ndim == 1, "indices must be one-dimensional"
+        requested = assert_index(index, sorted=False)
         positions, present = _locate(support, requested)
         if not np.all(present):
             missing = requested[~present][:10].tolist()

@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 import numpy as np
 import numpy.typing as npt
 
-from tinycable.utils import Ns, _safe_exp, vtrap, _canonical_index
+from tinycable.utils import Ns, _safe_exp, assert_index, vtrap
 
 
 @dataclass(frozen=True, eq=False)
@@ -22,7 +22,7 @@ class Mechanism:
         if self.name is None:
             object.__setattr__(self, "name", type(self).__name__.lower())
         if self.index is not None:
-            index = _canonical_index(self.index)
+            index = assert_index(self.index)
             object.__setattr__(self, "index", index)
 
     def d(self, t: Any, s: Ns, p: Ns) -> dict[str, Any]:
@@ -54,12 +54,8 @@ class Synapse(Mechanism):
     ) -> None:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "index", index)
-        object.__setattr__(
-            self, "pre_index", self._endpoint_array(pre_index, "pre_index")
-        )
-        object.__setattr__(
-            self, "post_index", self._endpoint_array(post_index, "post_index")
-        )
+        object.__setattr__(self, "pre_index", self._endpoint_array(pre_index))
+        object.__setattr__(self, "post_index", self._endpoint_array(post_index))
         Mechanism.__post_init__(self)
         if self.pre_index is not None and self.post_index is not None:
             assert len(self.pre_index) == len(self.post_index), (
@@ -67,10 +63,10 @@ class Synapse(Mechanism):
             )
 
     @staticmethod
-    def _endpoint_array(values: npt.ArrayLike | None, name: str) -> np.ndarray | None:
+    def _endpoint_array(values: npt.ArrayLike | None) -> np.ndarray | None:
         if values is None:
             return None
-        return _canonical_index(values, assert_sorted=False)
+        return assert_index(values, sorted=False)
 
     def d(self, t: Any, s: Ns, p: Ns, pre: Ns, post: Ns) -> dict[str, Any]:
         return {}

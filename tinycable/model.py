@@ -26,6 +26,12 @@ def _insert_declared_fields(
             _insert_field(fields, new_field.place(index))
 
 
+def _assert_sites(index: np.ndarray, n: int, name: str) -> None:
+    assert np.all((index >= 0) & (index < n)), (
+        f"{name} must reference model compartments"
+    )
+
+
 @dataclass(frozen=True, init=False, eq=False)
 class Model:
     """Immutable morphology, field, mechanism, and Synapse declarations."""
@@ -115,12 +121,8 @@ class Model:
             assert len(item.pre_index) > 0, (
                 "Synapse insertion requires at least one edge"
             )
-            assert np.all((item.pre_index >= 0) & (item.pre_index < self.morph.n)), (
-                "Synapse pre_index must reference model compartments"
-            )
-            assert np.all((item.post_index >= 0) & (item.post_index < self.morph.n)), (
-                "Synapse post_index must reference model compartments"
-            )
+            _assert_sites(item.pre_index, self.morph.n, "Synapse pre_index")
+            _assert_sites(item.post_index, self.morph.n, "Synapse post_index")
             n_new = len(item.pre_index)
 
             fields = dict(self._fields)
@@ -159,9 +161,7 @@ class Model:
         mechs = dict(self._mechs)
         if item.index is None:
             item = replace(item, index=self.morph.index)
-        assert np.all((item.index >= 0) & (item.index < self.morph.n)), (
-            "mechanism index must reference model compartments"
-        )
+        _assert_sites(item.index, self.morph.n, "mechanism index")
         previous = mechs.get(item.name)
         # Name alone selects the instance set; a different type may overwrite it.
         mech_index = (

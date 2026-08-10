@@ -30,13 +30,13 @@ def dict2mapping(values: Mapping[str, T]) -> Mapping[str, T]:
     return MappingProxyType(dict(values))
 
 
-def _canonical_index(index: npt.ArrayLike, assert_sorted: bool = True) -> np.ndarray:
+def assert_index(index: npt.ArrayLike, sorted: bool = True) -> np.ndarray:
     index = readonly(index, dtype=np.int32)
     assert index.ndim == 1, "indices must be one-dimensional"
-    assert np.issubdtype(index.dtype, np.integer), "must be integer-valued"
-    if assert_sorted:
+    if sorted:
         assert np.all(index[1:] > index[:-1]), "index must be sorted and deduplicated"
     return index
+
 
 IDENTITY: Final = object()
 

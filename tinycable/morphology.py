@@ -45,28 +45,22 @@ def _labels(
         result.update(dict(labels))
 
     for name, values in result.items():
-        assert isinstance(name, str), "label names must be strings"
-
         raw = np.asarray(values)
         assert raw.ndim == 1, f"{name} must be one-dimensional"
         assert len(raw) == len(tree), f"{name} must have length {len(tree)}"
 
-        is_integer = np.issubdtype(raw.dtype, np.integer)
-        is_boolean = np.issubdtype(raw.dtype, np.bool_)
-
         if name in {"cell", "branch", "comp"}:
-            assert is_integer, f"{name} must be integer-valued"
+            assert np.issubdtype(raw.dtype, np.integer), (
+                f"{name} must be integer-valued"
+            )
             unique = np.unique(raw)
             assert np.array_equal(unique, np.arange(len(unique), dtype=np.int32)), (
                 f"{name} labels must be compact from zero"
             )
+            result[name] = readonly(raw, dtype=np.int32)
         else:
-            assert is_boolean, f"{name} must be boolean-valued"
-
-        result[name] = readonly(
-            raw,
-            dtype=np.int32 if is_integer else np.bool_,
-        )
+            assert np.issubdtype(raw.dtype, np.bool_), f"{name} must be boolean-valued"
+            result[name] = readonly(raw, dtype=np.bool_)
 
     return dict2mapping(result)
 
@@ -101,7 +95,7 @@ def _init_geometry(
 
     rin = np.asarray(rin)
     rout = np.asarray(rout)
-    n = len(rad)
+    n = len(ln)
     if (not rin.size or not rout.size) and len(rad) == n:
         load = np.zeros(n)
         np.divide(ln, 2 * np.pi * rad**2, where=rad > 0, out=load)
@@ -173,7 +167,7 @@ class Morphology:
         dims: str = "xy",
         ax: Any | None = None,
         marker: str | None = None,
-        kind: str = "swc",
+        kind: str = "seg",
     ) -> Any:
         """Plot segmented compartments or the raw SWC morphology."""
         assert len(dims) == 2 and all(dim in "xyz" for dim in dims), (
