@@ -5,7 +5,7 @@ from typing import Any, Self
 import numpy as np
 import numpy.typing as npt
 
-from tinycable.utils import assert_index, readonly
+from .utils import assert_index, readonly
 
 
 def _first(values: np.ndarray) -> Any:
@@ -30,7 +30,7 @@ def _locate(index: np.ndarray, requested: np.ndarray) -> tuple[np.ndarray, np.nd
     return positions, present
 
 
-def _compact_tokens(tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _enumerate_unique(tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     unique, first, inverse = np.unique(tokens, return_index=True, return_inverse=True)
     order = np.argsort(first)
     remap = np.empty(len(order), dtype=np.int32)
@@ -42,9 +42,11 @@ def _compact_tokens(tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 class Field:
     """Immutable slot storage over an optional site index."""
 
-    name: str
+    key: str
     slots: npt.ArrayLike
     dynamic: bool = False
+    public: bool = False
+    ref: str | None = None
     index: npt.ArrayLike | None = None
     groups: npt.ArrayLike | None = None
 
@@ -52,6 +54,7 @@ class Field:
         slots = np.array(self.slots, copy=True)
         index = None
         groups = None
+        ref = self.key if self.ref is None else self.ref
 
         if self.index is None:
             assert self.groups is None, "unplaced fields cannot define groups"
@@ -66,18 +69,19 @@ class Field:
                 slots = np.broadcast_to(slots, (n_slots, *slots.shape[1:])).copy()
             elif len(slots) != n_slots:
                 raise ValueError(
-                    f"field {self.name!r} has {len(slots)} slot values for "
+                    f"field {self.ref!r} has {len(slots)} slot values for "
                     f"{n_slots} groups"
                 )
 
         slots = readonly(slots)
+        object.__setattr__(self, "ref", ref)
         object.__setattr__(self, "slots", slots)
         object.__setattr__(self, "index", index)
         object.__setattr__(self, "groups", groups)
 
     def _require_index(self) -> np.ndarray:
         if self.index is None:
-            raise ValueError(f"field {self.name!r} must be placed first")
+            raise ValueError(f"field {self.ref!r} must be inserted first")
         return self.index
 
     @property
@@ -89,14 +93,89 @@ class Field:
         return self.slots.shape[1:]
 
     @property
-    def values(self) -> np.ndarray:
+    def value(self) -> np.ndarray:
         return self.slots if self.index is None else self.slots[self.groups]
 
-    def place(self, index: npt.ArrayLike, groups: npt.ArrayLike | None = None) -> Self:
-        """Place a one-slot template over a site index."""
+    def _insert(
+        self,
+        index: npt.ArrayLike,
+        *,
+        prefix: str | None = None,
+        dynamic: bool | None = None,
+    ) -> Self:
+        """Insert an unplaced declaration into a model support."""
         if self.index is not None:
-            raise ValueError(f"field {self.name!r} is already placed")
-        return replace(self, index=index, groups=groups)
+            raise ValueError(f"field {self.ref!r} is already inserted")
+        ref = self.key if self.public or prefix is None else f"{prefix}_{self.key}"
+        return replace(
+            self,
+            ref=ref,
+            index=index,
+            dynamic=self.dynamic if dynamic is None else dynamic,
+        )
+
+    def set(self, value: Any, *, at: npt.ArrayLike | None = None) -> Self:
+        """Return a copy with selected slot values replaced."""
+        support = self._require_index()
+        sites = support if at is None else assert_index(at, sorted=False)
+        projection = self.slot_index(sites)
+
+        values = np.asarray(value)
+        payload = self.value_shape
+        target_shape = (len(sites), *payload)
+        if values.ndim == 0 or values.shape == payload:
+            values = np.broadcast_to(values, target_shape)
+        elif values.shape != target_shape:
+            raise ValueError(
+                f"values for field {self.ref!r} must be scalar or have shape "
+                f"{payload} or {target_shape}, got {values.shape}"
+            )
+
+        groups, first, inverse = np.unique(
+            projection,
+            return_index=True,
+            return_inverse=True,
+        )
+
+        members = support[np.isin(self.groups, groups)]
+        if not np.array_equal(np.sort(sites), members):
+            raise ValueError(f"field {self.ref!r} requires complete groups")
+
+        if not np.array_equal(values, values[first][inverse]):
+            raise ValueError(f"values for field {self.ref!r} disagree within a group")
+
+        slots = np.array(self.slots, copy=True)
+        slots[groups] = values[first]
+        return replace(self, slots=slots)
+
+    def render(
+        self,
+        fmt: str = "str",
+        *,
+        role: bool = False,
+        shape: bool = False,
+        slot: bool = True,
+        sites: bool = True,
+        filter: Any = None,
+        compress: bool = False,
+    ) -> str | dict[str, Any]:
+        """Return a per-slot Field representation."""
+        from tinycable.extra.render import field_dict, fields_dict_to_str
+
+        if fmt not in {"str", "dict"}:
+            raise ValueError(f"unknown render format {fmt!r}")
+        data = field_dict(
+            self,
+            role=role,
+            shape=shape,
+            slot=slot,
+            sites=sites,
+            filter=filter,
+            compress=compress,
+        )
+        if not data:
+            return {} if fmt == "dict" else ""
+        return data if fmt == "dict" else fields_dict_to_str({self.ref: data})
 
     def slot_index(self, index: npt.ArrayLike) -> np.ndarray:
         """Return one raw slot index per requested site."""
@@ -105,7 +184,7 @@ class Field:
         positions, present = _locate(support, requested)
         if not np.all(present):
             missing = requested[~present][:10].tolist()
-            raise ValueError(f"field {self.name!r} does not exist at indices {missing}")
+            raise ValueError(f"field {self.ref!r} does not exist at indices {missing}")
         return np.asarray(self.groups[positions], dtype=np.int32)
 
     def regroup(
@@ -122,11 +201,11 @@ class Field:
             slots = np.empty((0, *self.value_shape), dtype=self.slots.dtype)
         elif reduce is _first:
             _, first = np.unique(groups, return_index=True)
-            slots = self.values[first]
+            slots = self.value[first]
         else:
             order = np.argsort(groups, kind="stable")
             cuts = np.flatnonzero(np.diff(groups[order])) + 1
-            values = self.values[order]
+            values = self.value[order]
             slots = np.stack(
                 [
                     np.broadcast_to(np.asarray(reduce(block)), self.value_shape)
@@ -137,7 +216,7 @@ class Field:
 
     def extend(self, other: Self, *, left_wins: bool = False) -> Self:
         """Merge supports while preserving the winning source-slot ties."""
-        assert self.name == other.name, "extended fields must have the same name"
+        assert self.ref == other.ref, "extended fields must have the same ref"
         assert self.value_shape == other.value_shape, (
             "extended fields must have the same value shape"
         )
@@ -159,7 +238,7 @@ class Field:
         tokens = np.empty(len(index), dtype=np.int64)
         tokens[use_left] = self.groups[left_pos[use_left]]
         tokens[~use_left] = self.n_slots + other.groups[right_pos[~use_left]]
-        groups, source_slots = _compact_tokens(tokens)
+        groups, source_slots = _enumerate_unique(tokens)
 
         slots = np.empty(
             (len(source_slots), *self.value_shape),

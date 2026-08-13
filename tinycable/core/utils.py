@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from types import MappingProxyType
+from collections.abc import Iterator
 from typing import Any, Final
 from typing import TypeVar
 
@@ -13,6 +14,9 @@ class Ns(dict[str, Any]):
     """Dictionary namespace with attribute access."""
 
     __getattr__ = dict.__getitem__
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self.values())
 
 
 T = TypeVar("T")

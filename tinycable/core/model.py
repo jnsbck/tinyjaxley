@@ -1,35 +1,69 @@
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import numpy as np
 import numpy.typing as npt
 
-from tinycable.field import Field
-from tinycable.mechanism import Mechanism, Synapse
-from tinycable.morphology import Morphology
-from tinycable.utils import dict2mapping
+from .field import Field
+from .mechanism import Mechanism, Synapse
+from .morphology import Morphology
+from .utils import dict2mapping
+
+if TYPE_CHECKING:
+    from .runtime import Runtime
 
 
 def _insert_field(fields: dict[str, Field], field: Field) -> None:
-    previous = fields.get(field.name)
-    fields[field.name] = field if previous is None else previous.extend(field)
+    assert field.ref is not None, "stored fields must have a pool reference"
+    previous = fields.get(field.ref)
+    fields[field.ref] = field if previous is None else previous.extend(field)
 
 
-def _insert_declared_fields(
-    fields: dict[str, Field], mech: Mechanism, index: npt.ArrayLike
-) -> None:
-    for key, value in {**mech.states, **mech.params}.items():
-        if value is not None:
-            new_field = Field(key, value, dynamic=key in mech.states)
-            _insert_field(fields, new_field.place(index))
+def _insert_declared_fields(fields: dict[str, Field], mech: Mechanism) -> None:
+    for _, _, field in mech.declarations():
+        if field is not None:
+            _insert_field(fields, field)
 
 
 def _assert_sites(index: np.ndarray, n: int, name: str) -> None:
     assert np.all((index >= 0) & (index < n)), (
         f"{name} must reference model compartments"
     )
+
+
+def _validate_current_names(item: Mechanism) -> set[str]:
+    names = item.currents
+    if not all(isinstance(name, str) for name in names):
+        raise TypeError("Mechanism currents must be strings")
+    unique = set(names)
+    if len(unique) != len(names):
+        raise ValueError(f"{type(item).__name__} currents must be unique")
+    return unique
+
+
+def _validate_cross_kind_names(
+    item: Mechanism,
+    other: Mapping[str, Mechanism],
+    other_kind: str,
+) -> None:
+    if item.name in other:
+        raise ValueError(
+            f"{item.name!r} is already used by a {other_kind}; "
+            "Mechanism and Synapse names must be disjoint"
+        )
+
+    current_names = _validate_current_names(item)
+    other_current_names = {
+        current for declaration in other.values() for current in declaration.currents
+    }
+    collision = current_names & other_current_names
+    if collision:
+        raise ValueError(
+            f"current names {sorted(collision)!r} are already used by a "
+            f"{other_kind}; Mechanism and Synapse current names must be disjoint"
+        )
 
 
 @dataclass(frozen=True, init=False, eq=False)
@@ -56,6 +90,10 @@ class Model:
             "cm": Field("cm", cm, index=index),
             "rad": Field("rad", morph.rad, index=index),
             "len": Field("len", morph.len, index=index),
+            "area": Field("area", morph.area, index=index),
+            "volume": Field("volume", morph.volume, index=index),
+            "rin": Field("rin", morph.rin, index=index),
+            "rout": Field("rout", morph.rout, index=index),
         }
         assert all(field.value_shape == () for field in fields.values()), (
             "model base fields must be scalar-valued"
@@ -107,7 +145,7 @@ class Model:
                 )
             fields = dict(self._fields)
             if item.index is None:
-                item = item.place(self.morph.index)
+                item = item._insert(self.morph.index)
             _insert_field(fields, item)
             return self._with(fields=fields)
 
@@ -115,6 +153,7 @@ class Model:
             assert item.index is None, (
                 "Synapse edge indices are assigned by Model.insert"
             )
+            _validate_cross_kind_names(item, self._mechs, "Mechanism")
             assert item.pre_index is not None and item.post_index is not None, (
                 "Synapse insertion requires pre_index and post_index"
             )
@@ -150,7 +189,7 @@ class Model:
                 post_index=post_index,
             )
             syns[item.name] = item
-            _insert_declared_fields(fields, item, item.index)
+            _insert_declared_fields(fields, item)
             return self._with(
                 fields=fields,
                 syns=syns,
@@ -159,6 +198,7 @@ class Model:
 
         fields = dict(self._fields)
         mechs = dict(self._mechs)
+        _validate_cross_kind_names(item, self._syns, "Synapse")
         if item.index is None:
             item = replace(item, index=self.morph.index)
         _assert_sites(item.index, self.morph.n, "mechanism index")
@@ -171,7 +211,7 @@ class Model:
         )
         item = replace(item, index=mech_index)
         mechs[item.name] = item
-        _insert_declared_fields(fields, item, mech_index)
+        _insert_declared_fields(fields, item)
         return self._with(fields=fields, mechs=mechs)
 
     def share(
@@ -196,6 +236,53 @@ class Model:
         groups = np.arange(len(self._fields[name].index), dtype=np.int32)
         return self.share(name, groups)
 
+    def set(
+        self,
+        name: str,
+        value: Any,
+        *,
+        at: npt.ArrayLike | None = None,
+    ) -> Self:
+        """Return a copy with values replaced in one stored Field."""
+        if name not in self._fields:
+            raise ValueError(f"unknown field {name!r}")
+        fields = dict(self._fields)
+        fields[name] = fields[name].set(value, at=at)
+        return self._with(fields=fields)
+
+    def values(
+        self,
+        fmt: str = "str",
+        *,
+        role: bool = False,
+        shape: bool = False,
+        slot: bool = True,
+        sites: bool = True,
+        filter: Any = None,
+        compress: bool = False,
+    ) -> str | dict[str, dict[str, Any]]:
+        """Return per-slot representations of all stored Fields."""
+        if fmt not in {"str", "dict"}:
+            raise ValueError(f"unknown values format {fmt!r}")
+        fields = {}
+        for name, field in self._fields.items():
+            data = field.render(
+                fmt="dict",
+                role=role,
+                shape=shape,
+                slot=slot,
+                sites=sites,
+                filter=filter,
+                compress=compress,
+            )
+            if data:
+                fields[name] = data
+        if fmt == "dict":
+            return fields
+        from tinycable.extra.render import fields_dict_to_str
+
+        return fields_dict_to_str(fields)
+
     def remove(self, name: str) -> Self:
         if name not in self._mechs:
             return self
@@ -210,3 +297,9 @@ class Model:
         # TODO: Track field ownership so removing or replacing a mechanism can
         # remove stale fields and support contributed only by that mechanism.
         return self._with(mechs=mechs)
+
+    def bind(self, *, device: Any = None, dtype: Any = None) -> "Runtime":
+        """Return an executable Runtime with values placed on a JAX device."""
+        from .runtime import _bind
+
+        return _bind(self, device=device, dtype=dtype)

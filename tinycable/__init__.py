@@ -1,24 +1,22 @@
-from tinycable.field import Field
-from tinycable.mechanism import Exp2Syn, K, Na, Channel, Leak, Mechanism, Synapse
-from tinycable.model import Model
-from tinycable.morphology import Cable, Morphology, Point
-from tinycable.utils import IDENTITY, Ns, dict2mapping, gather, scatter_add
+from tinycable.core.field import Field
+from tinycable.core.mechanism import Channel, Mechanism, Synapse
+from tinycable.core.model import Model
+from tinycable.core.morphology import Cable, Morphology, Point
+from tinycable.core.runtime import Runtime
+from tinycable.core.utils import IDENTITY, Ns, dict2mapping, gather, scatter_add
 
 __all__ = [
     "IDENTITY",
     "Cable",
     "Channel",
     "dict2mapping",
-    "Exp2Syn",
     "Field",
-    "K",
-    "Leak",
     "Mechanism",
     "Model",
     "Morphology",
-    "Na",
     "Ns",
     "Point",
+    "Runtime",
     "Synapse",
     "gather",
     "scatter_add",
